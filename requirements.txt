@@ -1,0 +1,5 @@
+# Runtime and tests currently use only the Python standard library.
+# No third-party packages are required for the workload generator.
+# Keep this file so every contributor uses the same installation command:
+#   python -m pip install -r requirements.txt
+# Add version-pinned dependencies here when simulator development needs them.

@@ -1,0 +1,16 @@
+{
+  "duration_ms": 60000,
+  "warmup_ms": 10000,
+  "normal_arrival_rate_per_s": 2.0,
+  "stress_arrival_rate_per_s": 0.5,
+  "normal_prompt_tokens": [128, 512],
+  "stress_initial_prompt_tokens": [2048, 4096],
+  "stress_followup_prompt_tokens": [64, 256],
+  "output_tokens": [32, 128],
+  "stress_turns": [3, 5],
+  "tool_duration_ms": [1000, 5000],
+  "w2_short_wait_factor": 0.25,
+  "w2_long_wait_factor": 4.0,
+  "w2_burst_period_ms": 10000,
+  "w2_burst_width_ms": 1000
+}
