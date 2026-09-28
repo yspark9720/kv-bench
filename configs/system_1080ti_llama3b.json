@@ -1,0 +1,10 @@
+{
+  "gpu_kv_pool_bytes": 4294967296,
+  "cpu_kv_pool_bytes": 68719476736,
+  "kv_bytes_per_token": 114688,
+  "block_size_tokens": 16,
+  "pcie_bytes_per_s": 12000000000,
+  "prefill_tokens_per_s": 8000,
+  "decode_tokens_per_s": 30,
+  "admission_max_wait_ms": 30000
+}

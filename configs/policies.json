@@ -1,0 +1,8 @@
+{
+  "pin_all": {},
+  "evict_recompute": {},
+  "fixed_ttl": {"ttl_ms": 30000, "evict_on_pressure": false},
+  "lru_offload": {},
+  "dynamic_ttl": {},
+  "duration_aware": {"keep_headroom": 0.3, "breakeven_factor": 2.0}
+}

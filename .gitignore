@@ -6,3 +6,5 @@ outputs/
 .env
 .env.*
 !.env.example
+results/
+.ipynb_checkpoints/

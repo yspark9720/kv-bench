@@ -1,12 +1,12 @@
-# KV-Bench 워크로드 생성기
+# KV-Bench 워크로드 생성기와 정책 시뮬레이터
 
-도구를 사용하는 LLM Agent의 KV Cache 정책 비교에 사용할 **합성 입력 트레이스**를 생성합니다. 세션 도착 시각, 턴별 토큰 수, 도구 대기시간을 W0·W1·W2 조건에 맞춰 JSONL 파일로 저장합니다.
+도구를 사용하는 LLM Agent의 KV Cache 정책 비교에 사용할 **합성 입력 트레이스**를 생성하고, 같은 트레이스를 **정책만 바꿔 재생**해 TTFT·거절률·GPU KV 점유율을 계산합니다. 세션 도착 시각, 턴별 토큰 수, 도구 대기시간을 W0·W1·W2 조건에 맞춰 JSONL 파일로 저장하고, 시뮬레이터가 그 파일을 읽습니다.
 
-현재 구현 범위는 트레이스 생성·저장·검증입니다. 실제 LLM 추론이나 GPU 실행, 정책 시뮬레이션, TTFT·거절률·GPU 점유율 계산은 포함하지 않습니다.
+현재 구현 범위는 트레이스 생성·저장·검증과 정책 6종 중 5종의 이산 사건 시뮬레이션입니다. 실제 LLM 추론이나 GPU 실행은 포함하지 않으며, 시스템 파라미터(prefill·decode 속도 등)는 실측 전 자리표시자입니다.
 
 ## 1. 설치
 
-Python 3.9 이상이 필요합니다. 현재 표준 라이브러리만 사용하므로 `requirements.txt`에는 외부 패키지가 없습니다. GPU 없이 실행할 수 있습니다.
+Python 3.9 이상이 필요합니다. 생성기와 시뮬레이터는 표준 라이브러리만 사용하므로 `requirements.txt`에는 외부 패키지가 없습니다. GPU 없이 실행할 수 있습니다. `notebooks/`의 노트북만 pandas와 matplotlib이 필요합니다.
 
 아래 명령은 `README.md`, `requirements.txt`, `kvbench/`가 있는 **프로젝트 루트**에서 실행합니다.
 
@@ -53,6 +53,31 @@ python -m kvbench generate --config configs/smoke.json --workload W2 --stress-le
 
 기존 JSONL 또는 동명의 메타데이터 파일이 있으면 덮어쓰지 않고 종료합니다. 재실행할 때는 다른 출력 이름을 지정하거나 기존 파일을 검증·조회하면 됩니다.
 
+### 정책 시뮬레이션
+
+```sh
+# 생성한 트레이스를 pin_all 정책으로 재생
+python -m kvbench simulate --trace outputs/w0_s1_seed0.jsonl --policy pin_all --output results/w0_s1_seed0_pin_all
+
+# 같은 트레이스를 fixed_ttl 로
+python -m kvbench simulate --trace outputs/w0_s1_seed0.jsonl --policy fixed_ttl --output results/w0_s1_seed0_fixed_ttl
+
+# results/*/summary.json 을 한 표로
+python -m kvbench collect results
+```
+
+| 옵션 | 의미 | 기본값 |
+|---|---|---|
+| `--trace` | 생성기가 만든 `.jsonl` 경로. 같은 이름의 `.meta.json`에서 `warmup_ms`를 읽음 | 필수 |
+| `--policy` | pin_all, evict_recompute, fixed_ttl, lru_offload, duration_aware, dynamic_ttl(미구현) | 필수 |
+| `--system` | 시스템 파라미터 JSON | `configs/system_1080ti_llama3b.json` |
+| `--policies` | 정책 파라미터 JSON. 파일이 없으면 정책 기본값 | `configs/policies.json` |
+| `--warmup-ms` | 메타데이터의 `warmup_ms` 대신 쓸 값 | 메타데이터 값 |
+| `--no-events` | `events.csv`를 쓰지 않음 (대량 실행용) | 쓰지 않음 |
+| `--output` | 이 run의 결과 디렉터리 | 필수 |
+
+결과 디렉터리가 이미 있으면 덮어쓰지 않고 종료합니다. 정책 동작, 지표 정의, 출력 파일은 [시뮬레이터 문서](docs/simulator.md)에 정리돼 있습니다.
+
 ### 검증과 내용 확인
 
 ```sh
@@ -62,7 +87,7 @@ python -m kvbench validate outputs/w0_s1_seed0.jsonl
 # 전체 개수와 첫 stress 세션의 턴별 내용 출력
 python -m examples.inspect_trace outputs/w0_s1_seed0.jsonl
 
-# 자동 테스트
+# 자동 테스트 (생성기 + 시뮬레이터)
 python -m unittest discover -s tests -v
 
 # 명령 도움말
@@ -116,6 +141,23 @@ W2의 대기는 세션마다 짧은 대기부터 시작해 기본 대기의 0.25
 
 도착 수는 확정 개수가 아니라 확률적으로 정해집니다. 세션의 후속 턴은 `duration_ms` 이후까지 이어질 수 있습니다.
 
+### 시스템 파라미터
+
+`configs/system_1080ti_llama3b.json`은 배정 서버(GTX 1080 Ti 11 GiB)와 Llama-3.2-3B FP16 기준입니다. `prefill_tokens_per_s`와 `decode_tokens_per_s`는 **실측 전 자리표시자**이며, 실측값이 나오면 이 파일만 바꿉니다.
+
+| 설정 | 기본값 | 의미 |
+|---|---|---|
+| `gpu_kv_pool_bytes` | 4294967296 | KV Cache 용 GPU 메모리 (11 GiB − 가중치 약 6 GiB − runtime ≈ 4 GiB) |
+| `cpu_kv_pool_bytes` | 68719476736 | 오프로드 목적지 호스트 메모리 |
+| `kv_bytes_per_token` | 114688 | 2 × 28 layers × 8 KV heads × 128 dim × 2 B = 112 KiB |
+| `block_size_tokens` | 16 | KV block 하나의 토큰 수 (vLLM 기본값) |
+| `pcie_bytes_per_s` | 12000000000 | GPU↔CPU 한 방향 전송 속도 (PCIe 3.0 x16 실측 약 12 GB/s) |
+| `prefill_tokens_per_s` | 8000 | prefill 처리 속도, 하나의 FIFO 서버 |
+| `decode_tokens_per_s` | 30 | 세션당 decode 속도 |
+| `admission_max_wait_ms` | 30000 | 이 시간 안에 KV block을 받지 못한 턴은 거절 |
+
+`configs/policies.json`은 정책별 파라미터입니다. `fixed_ttl.ttl_ms`(30000), `fixed_ttl.evict_on_pressure`(false), `duration_aware.keep_headroom`(0.3), `duration_aware.breakeven_factor`(2.0). 나머지 정책은 파라미터가 없습니다.
+
 ## 5. 파이썬 파일별 역할
 
 | 파일 | 역할 |
@@ -123,9 +165,17 @@ W2의 대기는 세션마다 짧은 대기부터 시작해 기본 대기의 0.25
 | `kvbench/__init__.py` | 패키지 설명과 버전 `0.1.0` |
 | `kvbench/__main__.py` | CLI 인자 해석, generate·validate 실행, 기존 출력 보호 및 오류 출력 |
 | `kvbench/workload.py` | 설정·턴 자료형, 난수·도착 생성, W0–W2 변환, 검증, 파일 입출력 |
+| `kvbench/system.py` | 시스템 파라미터 자료형과 JSON 로드, 정책 파라미터 로드 |
+| `kvbench/resources.py` | GPU block 풀, CPU 풀, PCIe·prefill FIFO 서버 |
+| `kvbench/policies/` | 정책 인터페이스(`base.py`)와 정책 6종, `REGISTRY` |
+| `kvbench/engine.py` | 세션 상태기계와 이벤트 루프 |
+| `kvbench/metrics.py` | run 지표 집계 |
+| `kvbench/simulate.py` | 트레이스 재생, 결과 파일 쓰기, summary 모으기 |
 | `examples/__init__.py` | 실행 예제 패키지 설명 |
 | `examples/inspect_trace.py` | 파일을 읽어 세션별로 묶고, 최초 도착 수와 첫 stress 세션의 내용을 출력 |
 | `tests/test_workload.py` | 재현성, 워크로드 변환, 문맥 계산, 오류 검출, 파일 입출력, CLI 테스트 |
+| `tests/test_simulator.py` | 정책별 완주·자원 반환, 정책 동작(무삭제·즉시 삭제·TTL), 결정성, 설정 검증, 결과 파일, CLI 테스트 |
+| `notebooks/w0_baseline.ipynb` | 5주차: W0 × pin_all·fixed_ttl × seed 5 실행, 지표 표, 점유율 곡선 |
 
 `workload.py`의 주요 구성은 다음과 같습니다.
 
@@ -144,6 +194,8 @@ W2의 대기는 세션마다 짧은 대기부터 시작해 기본 대기의 0.25
 
 생성 명령은 `load_config()` → `generate()` → `write_trace()` 순서로 실행됩니다. 난수는 normal/stress와 도착/내용을 분리해 사용합니다.
 
+시뮬레이션 명령은 `read_trace()` → `Simulator(...).run()` → `summarize()` → `write_results()` 순서입니다. 세션 상태와 정책 결정 지점은 [docs/simulator.md](docs/simulator.md)에 있습니다.
+
 ## 6. 출력 형식
 
 | 파일 | 내용 |
@@ -159,4 +211,6 @@ W2의 대기는 세션마다 짧은 대기부터 시작해 기본 대기의 0.25
 
 전체 필드와 시간·토큰 정의는 [트레이스 스키마](docs/trace_schema.md)에 정리돼 있습니다. `validate`는 데이터 구조를 검사하며 메타데이터 hash 대조나 성능 측정은 수행하지 않습니다.
 
-`.venv/`, `outputs/`, Python 캐시, `.env` 파일은 Git 추적에서 제외됩니다.
+시뮬레이션 결과는 `--output` 디렉터리에 `summary.json`, `requests.csv`, `occupancy.csv`, `events.csv`로 저장되고, `collect`가 `results/summary.csv`로 모읍니다. 필드는 [시뮬레이터 문서](docs/simulator.md)의 출력 절을 참고합니다.
+
+`.venv/`, `outputs/`, `results/`, Python 캐시, `.env` 파일은 Git 추적에서 제외됩니다.
