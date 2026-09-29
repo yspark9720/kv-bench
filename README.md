@@ -175,7 +175,7 @@ W2의 대기는 세션마다 짧은 대기부터 시작해 기본 대기의 0.25
 | `examples/inspect_trace.py` | 파일을 읽어 세션별로 묶고, 최초 도착 수와 첫 stress 세션의 내용을 출력 |
 | `tests/test_workload.py` | 재현성, 워크로드 변환, 문맥 계산, 오류 검출, 파일 입출력, CLI 테스트 |
 | `tests/test_simulator.py` | 정책별 완주·자원 반환, 정책 동작(무삭제·즉시 삭제·TTL), 결정성, 설정 검증, 결과 파일, CLI 테스트 |
-| `notebooks/w0_baseline.ipynb` | 5주차: W0 × pin_all·fixed_ttl × seed 5 실행, 지표 표, 점유율 곡선 |
+| `notebooks/w0_baseline.ipynb` | 5주차: W0 × pin_all·evict_recompute × seed 5 실행, 지표 표, 점유율 곡선, events.csv 로 동작 확인 |
 
 `workload.py`의 주요 구성은 다음과 같습니다.
 
