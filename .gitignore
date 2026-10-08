@@ -8,3 +8,4 @@ outputs/
 !.env.example
 results/
 .ipynb_checkpoints/
+archive.tar.gz

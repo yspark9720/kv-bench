@@ -78,6 +78,27 @@ python -m kvbench collect results
 
 결과 디렉터리가 이미 있으면 덮어쓰지 않고 종료합니다. 정책 동작, 지표 정의, 출력 파일은 [시뮬레이터 문서](docs/simulator.md)에 정리돼 있습니다.
 
+### 7주차 비교 실험
+
+7주차 설정은 W0의 stress 세션 도착률을 0.2 sessions/s로 보정하고 Fixed TTL을 3초로 고정합니다. W0 1x·W1 2x·W1 4x를 Pin-All·Evict/Recompute·Fixed TTL로 seed 5개씩 실행합니다.
+
+```sh
+# Fixed TTL 1초·3초·5초 비교
+python -m kvbench ttl-sweep
+
+# 정책 3개 × 부하 3개 × seed 5개 = 45 runs
+python -m kvbench week7
+```
+
+실행 조건과 출력 파일은 [7주차 실험 문서](docs/week7_experiment.md)에 정리돼 있습니다.
+
+각 단계를 직접 확인하려면 노트북 의존성을 설치하고 Jupyter Lab에서 `notebooks/week7_step_by_step.ipynb`를 위에서부터 실행합니다.
+
+```sh
+python -m pip install -r requirements-notebook.txt
+python -m jupyter lab
+```
+
 ### 검증과 내용 확인
 
 ```sh
@@ -120,7 +141,7 @@ W2의 대기는 세션마다 짧은 대기부터 시작해 기본 대기의 0.25
 
 ## 4. 설정값
 
-`configs/smoke.json`의 값은 **동작 확인용 합성 설정**이며 실측값이 아닙니다. `[최솟값, 최댓값]` 형태의 값은 양 끝을 포함한 정수 균등 분포로 추출합니다.
+`configs/smoke.json`의 값은 **5주차 동작 확인용 합성 설정**이며 실측값이 아닙니다. `configs/week7.json`은 다른 값을 유지하고 `stress_arrival_rate_per_s`만 0.2로 낮춘 7주차 설정입니다. `[최솟값, 최댓값]` 형태의 값은 양 끝을 포함한 정수 균등 분포로 추출합니다.
 
 | 설정 | 기본값 | 의미 |
 |---|---|---|
@@ -156,7 +177,7 @@ W2의 대기는 세션마다 짧은 대기부터 시작해 기본 대기의 0.25
 | `decode_tokens_per_s` | 30 | 세션당 decode 속도 |
 | `admission_max_wait_ms` | 30000 | 이 시간 안에 KV block을 받지 못한 턴은 거절 |
 
-`configs/policies.json`은 정책별 파라미터입니다. `fixed_ttl.ttl_ms`(30000), `fixed_ttl.evict_on_pressure`(false), `duration_aware.keep_headroom`(0.3), `duration_aware.breakeven_factor`(2.0). 나머지 정책은 파라미터가 없습니다.
+`configs/policies.json`은 기존 정책 파라미터입니다. `configs/policies_week7.json`은 Fixed TTL을 3,000ms로 바꾼 7주차 설정입니다. 두 파일 모두 `fixed_ttl.evict_on_pressure`는 false이며, 나머지 정책 설정은 같습니다.
 
 ## 5. 파이썬 파일별 역할
 
@@ -171,11 +192,13 @@ W2의 대기는 세션마다 짧은 대기부터 시작해 기본 대기의 0.25
 | `kvbench/engine.py` | 세션 상태기계와 이벤트 루프 |
 | `kvbench/metrics.py` | run 지표 집계 |
 | `kvbench/simulate.py` | 트레이스 재생, 결과 파일 쓰기, summary 모으기 |
+| `kvbench/experiment.py` | 7주차 45회 매트릭스, TTL sweep, 평균·표준편차·SLO 통과율 집계 |
 | `examples/__init__.py` | 실행 예제 패키지 설명 |
 | `examples/inspect_trace.py` | 파일을 읽어 세션별로 묶고, 최초 도착 수와 첫 stress 세션의 내용을 출력 |
 | `tests/test_workload.py` | 재현성, 워크로드 변환, 문맥 계산, 오류 검출, 파일 입출력, CLI 테스트 |
 | `tests/test_simulator.py` | 정책별 완주·자원 반환, 정책 동작(무삭제·즉시 삭제·TTL), 결정성, 설정 검증, 결과 파일, CLI 테스트 |
 | `notebooks/w0_baseline.ipynb` | 5주차: W0 × pin_all·evict_recompute × seed 5 실행, 지표 표, 점유율 곡선, events.csv 로 동작 확인 |
+| `notebooks/week7_step_by_step.ipynb` | 7주차: 설정·트레이스·정책·TTL을 단계별로 확인한 뒤 45회 비교 실행 |
 
 `workload.py`의 주요 구성은 다음과 같습니다.
 
@@ -212,5 +235,7 @@ W2의 대기는 세션마다 짧은 대기부터 시작해 기본 대기의 0.25
 전체 필드와 시간·토큰 정의는 [트레이스 스키마](docs/trace_schema.md)에 정리돼 있습니다. `validate`는 데이터 구조를 검사하며 메타데이터 hash 대조나 성능 측정은 수행하지 않습니다.
 
 시뮬레이션 결과는 `--output` 디렉터리에 `summary.json`, `requests.csv`, `occupancy.csv`, `events.csv`로 저장되고, `collect`가 `results/summary.csv`로 모읍니다. 필드는 [시뮬레이터 문서](docs/simulator.md)의 출력 절을 참고합니다.
+
+`week7` 명령은 `results/week7/summary.csv`와 정책·부하별로 집계한 `comparison.csv`를 추가로 만듭니다. 실행에 사용한 설정 전체는 `experiment.json`에 저장합니다.
 
 `.venv/`, `outputs/`, `results/`, Python 캐시, `.env` 파일은 Git 추적에서 제외됩니다.
