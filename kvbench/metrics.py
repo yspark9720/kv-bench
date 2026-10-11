@@ -5,6 +5,11 @@ Primary
 - normal_reject_rate_pct: rejected normal / submitted normal * 100
 - peak_kv_occupancy_pct: max used_blocks / total_blocks * 100 after warm-up
 
+Policy cost
+- stress_resume_p95_ms: P95 of first_token_ms - arrival_ms over completed stress follow-up turns
+  (turn_id > 0), i.e. from tool completion to the next first token. It includes recompute, reload
+  and admission wait, so it puts every policy's cost on one scale.
+
 Requests that arrive before warmup_ms are excluded from every metric.
 """
 
@@ -43,6 +48,7 @@ def summarize(sim, warmup_ms, meta=None):
     normal_done = [r for r in normal if r.outcome == "completed" and r.ttft_ms is not None]
     normal_rejected = [r for r in normal if r.outcome == "rejected"]
     all_done = [r for r in measured if r.outcome == "completed" and r.ttft_ms is not None]
+    resumed = [r for r in all_done if r.request_class == "stress" and r.turn_id > 0]
 
     jobs_done = [s for s in sim.sessions.values()
                  if s.job_finished_ms is not None and s.state.value == "done" and s.job_arrival_ms >= warmup_ms]
@@ -63,6 +69,7 @@ def summarize(sim, warmup_ms, meta=None):
         "normal_p95_ttft_ms": percentile([r.ttft_ms for r in normal_done], 95),
         "normal_reject_rate_pct": len(normal_rejected) / len(normal) * 100 if normal else None,
         "peak_kv_occupancy_pct": round(peak_occupancy_pct(sim.gpu.samples, sim.gpu.total_blocks, warmup_ms), 2),
+        "stress_resume_p95_ms": percentile([r.ttft_ms for r in resumed], 95),
         "all_p95_ttft_ms": percentile([r.ttft_ms for r in all_done], 95),
         "completed_jobs": len(jobs_done),
         "rejected_jobs": counters.rejected_jobs,

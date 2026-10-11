@@ -16,6 +16,7 @@ SUMMARY_COLUMNS = [
     "run_id", "policy", "trace", "workload_id", "stress_level", "seed", "warmup_ms",
     "normal_submitted", "normal_completed", "normal_rejected",
     "normal_p50_ttft_ms", "normal_p95_ttft_ms", "normal_reject_rate_pct", "peak_kv_occupancy_pct",
+    "stress_resume_p95_ms",
     "completed_jobs", "rejected_jobs", "throughput_jobs_per_s", "task_completion_mean_ms", "task_completion_p95_ms",
     "eviction_count", "eviction_per_job", "offload_count", "reload_count", "transfer_bytes", "transfer_gib_per_job",
     "recomputed_tokens", "recomputed_tokens_per_job", "prefill_busy_pct", "pcie_busy_pct", "sessions", "end_ms",

@@ -199,6 +199,7 @@ W2의 대기는 세션마다 짧은 대기부터 시작해 기본 대기의 0.25
 | `tests/test_simulator.py` | 정책별 완주·자원 반환, 정책 동작(무삭제·즉시 삭제·TTL), 결정성, 설정 검증, 결과 파일, CLI 테스트 |
 | `notebooks/w0_baseline.ipynb` | 5주차: W0 × pin_all·evict_recompute × seed 5 실행, 지표 표, 점유율 곡선, events.csv 로 동작 확인 |
 | `notebooks/week7_step_by_step.ipynb` | 7주차: 설정·트레이스·정책·TTL을 단계별로 확인한 뒤 45회 비교 실행 |
+| `notebooks/week7_policy_steps.ipynb` | 7주차: 같은 설정에 LRU Offload를 더해 판정 지표 3개(일반 요청 P95 TTFT · 도구 세션 복귀 지연 · 거절)로 기준선 → Evict → Fixed TTL → LRU를 한 단계씩 비교 (60회) |
 
 `workload.py`의 주요 구성은 다음과 같습니다.
 
