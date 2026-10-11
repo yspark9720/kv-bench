@@ -57,7 +57,6 @@ warm-up 구간(`warmup_ms`, 트레이스 메타데이터의 값, `--warmup-ms`�
 | `normal_p95_ttft_ms` | 완료된 normal 요청의 `first_token_ms - arrival_ms` P95 |
 | `normal_reject_rate_pct` | 거절된 normal ÷ 제출된 normal × 100 |
 | `peak_kv_occupancy_pct` | warm-up 이후 `used_blocks ÷ total_blocks × 100`의 최댓값 |
-| `stress_resume_p95_ms` | 완료된 stress 후속 턴(`turn_id > 0`)의 `first_token_ms - arrival_ms` P95. 도구 완료부터 다음 첫 토큰까지로, 재계산 · 재적재 · 입장 대기를 모두 포함해 정책의 비용을 한 숫자로 비교 |
 | 보조 | 완료 작업 수, 처리량, 작업 완료시간, eviction·offload·reload 횟수, 전송 바이트, 재계산 토큰, prefill·PCIe 점유율 |
 
 ## 출력

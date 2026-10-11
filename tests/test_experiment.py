@@ -53,6 +53,22 @@ class ExperimentTests(unittest.TestCase):
                     seeds=(0,),
                 )
 
+    def test_extra_policy_is_judged_with_the_same_slos(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _, comparison = run_week7(
+                ROOT / "configs/week7.json",
+                ROOT / "configs/system_1080ti_llama3b.json",
+                ROOT / "configs/policies_week7.json",
+                Path(directory) / "week7",
+                seeds=(0,),
+                policies=("pin_all", "evict_recompute", "fixed_ttl", "lru_offload"),
+                keep_events=False,
+            )
+            with comparison.open(newline="", encoding="utf-8") as handle:
+                rows = list(csv.DictReader(handle))
+            self.assertEqual(len(rows), 12)
+            self.assertEqual({row["load"] for row in rows if row["policy"] == "lru_offload"}, {"1x", "2x", "4x"})
+
     def test_reduced_ttl_sweep(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "ttl"

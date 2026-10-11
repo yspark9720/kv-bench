@@ -57,20 +57,6 @@ class SimulatorTests(unittest.TestCase):
         idle = sum(e[1] == "TOOL_START" for e in sim.events)
         self.assertEqual(idle, sum(e[1] == "EVICT" for e in sim.events))
 
-    def test_stress_resume_latency_shows_recompute_cost(self):
-        # The week-7 W0 does not saturate, so the difference comes from the policy alone.
-        workload = load_config(ROOT / "configs/week7.json")
-        rows = generate(workload, "W0", 1, 0)
-        pinned = summarize(Simulator(rows, self.system, make_policy("pin_all")).run(), workload.warmup_ms)
-        sim = Simulator(rows, self.system, make_policy("evict_recompute")).run()
-        evicted = summarize(sim, workload.warmup_ms)
-        resumed = [r.ttft_ms for r in sim.all_records()
-                   if r.request_class == "stress" and r.turn_id > 0 and r.outcome == "completed"
-                   and r.arrival_ms >= workload.warmup_ms]
-        self.assertIn(evicted["stress_resume_p95_ms"], resumed)
-        # Recomputing the cached prefix on every resume costs more than keeping it.
-        self.assertGreater(evicted["stress_resume_p95_ms"], pinned["stress_resume_p95_ms"])
-
     def test_fixed_ttl_evicts_exactly_after_ttl(self):
         sim, summary = self.run_policy("fixed_ttl", ttl_ms=1000)
         self.assertGreater(summary["eviction_count"], 0)

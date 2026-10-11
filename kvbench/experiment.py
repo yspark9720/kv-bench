@@ -56,8 +56,8 @@ def _sample_std(values):
     return stdev(values) if len(values) > 1 else 0.0
 
 
-def aggregate_week7(summary_csv, output_csv=None):
-    """Aggregate seed-level summaries and apply the proposed week-7 SLOs."""
+def aggregate_week7(summary_csv, output_csv=None, policies=WEEK7_POLICIES):
+    """Aggregate seed-level summaries and apply the proposed week-7 SLOs to `policies`."""
     summary_csv = Path(summary_csv)
     with summary_csv.open(newline="", encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
@@ -79,7 +79,7 @@ def aggregate_week7(summary_csv, output_csv=None):
         groups.setdefault((row["policy"], label), []).append(row)
 
     baseline = {}
-    for policy in WEEK7_POLICIES:
+    for policy in policies:
         values = groups.get((policy, "1x"))
         if not values:
             raise ValueError(f"missing 1x baseline for {policy}")
@@ -87,7 +87,7 @@ def aggregate_week7(summary_csv, output_csv=None):
             baseline[(policy, row["seed"])] = float(row["normal_p95_ttft_ms"])
 
     output_rows = []
-    for policy in WEEK7_POLICIES:
+    for policy in policies:
         for label, _, _ in WEEK7_CONDITIONS:
             values = groups.get((policy, label))
             if not values:
@@ -165,7 +165,7 @@ def run_week7(config_path, system_path, policies_path, output_dir,
                 write_results(sim, summary, output_dir / "runs" / run_id)
 
     raw_summary = collect(output_dir / "runs", output_dir / "summary.csv")
-    comparison = aggregate_week7(raw_summary, output_dir / "comparison.csv")
+    comparison = aggregate_week7(raw_summary, output_dir / "comparison.csv", policies)
     return raw_summary, comparison
 
 
