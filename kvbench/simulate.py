@@ -16,7 +16,9 @@ SUMMARY_COLUMNS = [
     "run_id", "policy", "trace", "workload_id", "stress_level", "seed", "warmup_ms",
     "normal_submitted", "normal_completed", "normal_rejected",
     "normal_p50_ttft_ms", "normal_p95_ttft_ms", "normal_reject_rate_pct", "peak_kv_occupancy_pct",
+    "measurement_end_ms", "mean_kv_occupancy_pct", "kv_above_90_ms", "kv_above_90_pct_of_time",
     "completed_jobs", "rejected_jobs", "throughput_jobs_per_s", "task_completion_mean_ms", "task_completion_p95_ms",
+    "stress_submitted_jobs", "stress_completed_jobs", "stress_p95_completion_ms",
     "eviction_count", "eviction_per_job", "offload_count", "reload_count", "transfer_bytes", "transfer_gib_per_job",
     "recomputed_tokens", "recomputed_tokens_per_job", "prefill_busy_pct", "pcie_busy_pct", "sessions", "end_ms",
 ]
@@ -38,10 +40,15 @@ def simulate(trace_path, policy, system, policy_params=None, warmup_ms=None, kee
         raise ValueError("trace is empty")
     if warmup_ms is None:
         warmup_ms = trace_warmup_ms(trace_path)
+    meta_path = Path(trace_path).with_suffix(".meta.json")
+    measurement_end_ms = None
+    if meta_path.exists():
+        trace_meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        measurement_end_ms = float(trace_meta["config"]["duration_ms"])
     sim = Simulator(rows, system, make_policy(policy, policy_params), keep_events).run()
     meta = {"trace": Path(trace_path).name, "workload_id": rows[0].workload_id,
             "stress_level": rows[0].stress_level, "seed": rows[0].seed, "warmup_ms": warmup_ms}
-    return sim, summarize(sim, warmup_ms, meta)
+    return sim, summarize(sim, warmup_ms, meta, measurement_end_ms)
 
 
 def write_results(sim, summary, output_dir, overwrite=False):

@@ -302,9 +302,18 @@ class Simulator:
             return
         s.state, s.idle_since_ms, s.ttl_deadline_ms = SessionState.TOOL_WAIT, self.now, None
         self._push(self.now + turn.tool_duration_ms, "TOOL_END", s.sid, s.idx)
-        decision = self.policy.on_idle_start(self._view(s), self._ctx())
-        self._log("TOOL_START", s, f"wait_ms={turn.tool_duration_ms:.0f} decision={decision.action.value}"
-                                    + (f" ttl_ms={decision.ttl_ms:.0f}" if decision.ttl_ms else ""))
+        view, ctx = self._view(s), self._ctx()
+        decision = self.policy.on_idle_start(view, ctx)
+        self._log(
+            "TOOL_START", s,
+            f"wait_ms={turn.tool_duration_ms:.0f} decision={decision.action.value}"
+            + (f" ttl_ms={decision.ttl_ms:.0f}" if decision.ttl_ms is not None else "")
+            + f" gpu_used_blocks={self.gpu.used_blocks} gpu_free_blocks={ctx.free_blocks}"
+              f" headroom_pct={ctx.headroom * 100:.2f} predicted_wait_ms={view.predicted_wait_ms:.1f}"
+              f" offload_oneway_ms={ctx.offload_ms(view.gpu_blocks):.1f}"
+              f" prefix_recompute_ms_est={ctx.recompute_ms(view.context_tokens):.1f}"
+              f" cpu_free_bytes={ctx.cpu_free_bytes} admission_queue_len={ctx.admission_queue_len}",
+        )
         self._apply_decision(s, decision)
         self._try_admit()
 

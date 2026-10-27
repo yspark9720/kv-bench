@@ -51,6 +51,24 @@ class WorkloadTests(unittest.TestCase):
             start = after.burst_id * self.config.w2_burst_period_ms
             self.assertTrue(start <= after.session_arrival_ms < start + self.config.w2_burst_width_ms)
 
+    def test_w2_factors_change_one_input_dimension_at_a_time(self):
+        for level in (2, 4):
+            base = {r.request_id: r for r in generate(self.config, "W1", level, seed=3)}
+            burst = {r.request_id: r for r in generate(self.config, "W2_BURST", level, seed=3)}
+            wait = {r.request_id: r for r in generate(self.config, "W2_WAIT", level, seed=3)}
+            both = {r.request_id: r for r in generate(self.config, "W2", level, seed=3)}
+            self.assertEqual(base.keys(), burst.keys())
+            for request_id, original in base.items():
+                self.assertEqual(burst[request_id].tool_duration_ms, original.tool_duration_ms)
+                self.assertEqual(wait[request_id].session_arrival_ms, original.session_arrival_ms)
+                self.assertEqual(both[request_id].session_arrival_ms, burst[request_id].session_arrival_ms)
+                self.assertEqual(both[request_id].tool_duration_ms, wait[request_id].tool_duration_ms)
+                self.assertEqual(burst[request_id].prompt_tokens, original.prompt_tokens)
+                self.assertEqual(wait[request_id].context_tokens, original.context_tokens)
+                if original.request_class == "stress":
+                    self.assertIsNotNone(burst[request_id].burst_id)
+                    self.assertIsNone(wait[request_id].burst_id)
+
     def test_context_and_dependencies(self):
         rows = generate(self.config)
         sessions = {}
@@ -125,7 +143,7 @@ class WorkloadTests(unittest.TestCase):
             self.assertEqual(run.returncode, 0, run.stderr)
 
     def test_full_proposed_workload_grid(self):
-        for workload in ("W0", "W1", "W2"):
+        for workload in ("W0", "W1", "W2_BURST", "W2_WAIT", "W2"):
             for level in ((1,) if workload == "W0" else (1, 2, 4, 8)):
                 for seed in range(5):
                     with self.subTest(workload=workload, level=level, seed=seed):

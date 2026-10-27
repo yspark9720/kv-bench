@@ -14,7 +14,7 @@ JSONL 한 행은 한 세션의 한 턴입니다. 시간 단위는 ms, 토큰 수
 | request_id | str | 파일 내 고유한 턴 요청 ID |
 | request_class | str | `normal` 또는 `stress` |
 | seed | int | 0 이상의 난수 seed |
-| workload_id | str | W0, W1, W2 |
+| workload_id | str | W0, W1, W2_BURST, W2_WAIT, W2 |
 | stress_level | int | 1, 2, 4, 8. W0는 1 |
 | session_arrival_ms | number | 최초 외부 도착 시각. 같은 세션의 모든 행에 반복 |
 | arrival_ms | number / null | 첫 턴은 최초 도착 시각, 후속 턴은 null |
@@ -25,7 +25,7 @@ JSONL 한 행은 한 세션의 한 턴입니다. 시간 단위는 ms, 토큰 수
 | expected_turns | int | 해당 세션 전체 턴 수 |
 | tool_duration_ms | number | 이번 턴 출력 완료 뒤 외부 도구의 실행·대기시간. 마지막 턴은 0 |
 | arrival_rate_per_s | number | 해당 클래스의 원래 세션 도착률. W2 burst 순간 도착률이 아님 |
-| burst_id | int / null | W2 stress의 0부터 시작하는 주기 번호. 그 외 null |
+| burst_id | int / null | W2_BURST·W2 stress의 0부터 시작하는 주기 번호. 그 외 null |
 
 첫 턴은 `context_tokens = prompt_tokens`입니다. 이후는 아래와 같습니다.
 
@@ -56,5 +56,9 @@ resume_ms = 필요한 전송·재계산·자원 대기를 반영한 실제 복�
 `duration_ms`는 외부 도착을 생성하는 구간 `[0, duration_ms)`의 끝입니다. 세션의 모든 턴은 파일에 포함하므로 후속 턴의 실행은 이 시각 이후까지 이어질 수 있습니다.
 
 `warmup_ms`는 설정과 메타데이터에 보존됩니다. 생성기는 warm-up 구간의 데이터를 삭제하거나 측정 지표를 집계하지 않습니다.
+
+시뮬레이터는 외부 도착이 끝나도 남은 턴·전송·이벤트를 처리합니다. 따라서 `duration_ms=180000`은 시뮬레이션이 180초에 종료된다는 뜻이 아닙니다. 지연·작업 완료·Peak·비용 누계는 서로 집계 구간이 다르며 [시뮬레이터 지표](simulator.md#지표)에 정의돼 있습니다. 정책이 달라지면 후속 턴의 실제 도착·완료 시각도 달라지므로, 정책 간 통제되는 것은 입력의 외부 도착·토큰·도구 대기 규칙입니다.
+
+normal/stress와 도착/내용 난수는 별도 stream을 사용합니다. 현재 9주차 설정에서는 같은 seed의 60초·stress 0.2 trace가 180초·0.2 trace의 앞 60초 세션과 일치하며, 두 180초 설정의 normal 입력도 동일합니다. 도착률 0.3은 stress 세션 수와 시각을 바꾸므로 전체 입력이 동일한 비교는 아닙니다. 설정별 검증과 해석은 [9주차 실험](week9_experiment.MD)에 정리돼 있습니다.
 
 포아송 도착이므로 매우 짧은 구간이나 낮은 도착률에서는 요청이 0개일 수 있습니다. 빈 트레이스도 형식상 허용합니다.

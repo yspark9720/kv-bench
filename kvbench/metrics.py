@@ -35,7 +35,31 @@ def peak_occupancy_pct(samples, total_blocks, warmup_ms):
     return max(peak, carried) / total_blocks * 100
 
 
-def summarize(sim, warmup_ms, meta=None):
+def occupancy_exposure(samples, total_blocks, start_ms, end_ms, threshold_pct=90):
+    """Time-weighted occupancy and time above a threshold on a fixed interval."""
+    if total_blocks <= 0 or end_ms <= start_ms:
+        return 0.0, 0.0, 0.0
+    used, previous_ms = 0, 0.0
+    block_ms, above_ms = 0.0, 0.0
+    for time_ms, next_used in samples:
+        left, right = max(previous_ms, start_ms), min(time_ms, end_ms)
+        if right > left:
+            elapsed = right - left
+            block_ms += used * elapsed
+            if used / total_blocks * 100 > threshold_pct:
+                above_ms += elapsed
+        used, previous_ms = next_used, time_ms
+    left = max(previous_ms, start_ms)
+    if end_ms > left:
+        elapsed = end_ms - left
+        block_ms += used * elapsed
+        if used / total_blocks * 100 > threshold_pct:
+            above_ms += elapsed
+    duration_ms = end_ms - start_ms
+    return block_ms / duration_ms / total_blocks * 100, above_ms, above_ms / duration_ms * 100
+
+
+def summarize(sim, warmup_ms, meta=None, measurement_end_ms=None):
     counters = sim.counters
     records = sim.all_records()
     measured = [r for r in records if r.arrival_ms >= warmup_ms]
@@ -46,10 +70,17 @@ def summarize(sim, warmup_ms, meta=None):
 
     jobs_done = [s for s in sim.sessions.values()
                  if s.job_finished_ms is not None and s.state.value == "done" and s.job_arrival_ms >= warmup_ms]
+    stress_jobs = [s for s in sim.sessions.values()
+                   if s.request_class == "stress" and s.job_arrival_ms >= warmup_ms]
+    stress_done = [s for s in stress_jobs if s.state.value == "done"]
     window_s = max(sim.now - warmup_ms, 1.0) / 1000
     n_jobs = max(len(jobs_done), 1)
     completion = [s.job_finished_ms - s.job_arrival_ms for s in jobs_done]
     transfer_bytes = counters.gpu_to_cpu_bytes + counters.cpu_to_gpu_bytes
+    measurement_end_ms = sim.now if measurement_end_ms is None else measurement_end_ms
+    mean_occupancy, above_90_ms, above_90_pct = occupancy_exposure(
+        sim.gpu.samples, sim.gpu.total_blocks, warmup_ms, measurement_end_ms
+    )
 
     return {
         **(meta or {}),
@@ -63,12 +94,21 @@ def summarize(sim, warmup_ms, meta=None):
         "normal_p95_ttft_ms": percentile([r.ttft_ms for r in normal_done], 95),
         "normal_reject_rate_pct": len(normal_rejected) / len(normal) * 100 if normal else None,
         "peak_kv_occupancy_pct": round(peak_occupancy_pct(sim.gpu.samples, sim.gpu.total_blocks, warmup_ms), 2),
+        "measurement_end_ms": measurement_end_ms,
+        "mean_kv_occupancy_pct": round(mean_occupancy, 2),
+        "kv_above_90_ms": round(above_90_ms, 1),
+        "kv_above_90_pct_of_time": round(above_90_pct, 2),
         "all_p95_ttft_ms": percentile([r.ttft_ms for r in all_done], 95),
         "completed_jobs": len(jobs_done),
         "rejected_jobs": counters.rejected_jobs,
         "throughput_jobs_per_s": round(len(jobs_done) / window_s, 4),
         "task_completion_mean_ms": sum(completion) / len(completion) if completion else None,
         "task_completion_p95_ms": percentile(completion, 95),
+        "stress_submitted_jobs": len(stress_jobs),
+        "stress_completed_jobs": len(stress_done),
+        "stress_p95_completion_ms": percentile(
+            [s.job_finished_ms - s.job_arrival_ms for s in stress_done], 95
+        ),
         "eviction_count": counters.evictions,
         "eviction_per_job": counters.evictions / n_jobs,
         "offload_count": counters.offloads,

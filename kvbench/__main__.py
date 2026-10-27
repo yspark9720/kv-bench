@@ -4,11 +4,11 @@ import argparse
 import json
 from pathlib import Path
 
-from .experiment import run_ttl_sweep, run_week7
+from .experiment import run_ttl_sweep, run_w2_factorial, run_week7
 from .policies import REGISTRY
 from .simulate import collect, simulate, write_results
 from .system import load_policy_params, load_system_config
-from .workload import generate, load_config, read_trace, validate, write_trace
+from .workload import WORKLOADS, generate, load_config, read_trace, validate, write_trace
 
 
 def main():
@@ -16,7 +16,7 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     make = commands.add_parser("generate", help="Generate a trace and its metadata")
     make.add_argument("--config", required=True, type=Path)
-    make.add_argument("--workload", choices=("W0", "W1", "W2"), default="W0")
+    make.add_argument("--workload", choices=WORKLOADS, default="W0")
     make.add_argument("--stress-level", type=int, choices=(1, 2, 4, 8), default=1)
     make.add_argument("--seed", type=int, default=0)
     make.add_argument("--output", required=True, type=Path)
@@ -45,6 +45,12 @@ def main():
     ttl.add_argument("--config", type=Path, default=Path("configs/week7.json"))
     ttl.add_argument("--system", type=Path, default=Path("configs/system_1080ti_llama3b.json"))
     ttl.add_argument("--output", type=Path, default=Path("results/week7_ttl_sweep"))
+    factorial = commands.add_parser("w2-factorial", help="Separate burst and alternating-wait effects")
+    factorial.add_argument("--config", type=Path, default=Path("configs/week7.json"))
+    factorial.add_argument("--system", type=Path, default=Path("configs/system_1080ti_llama3b.json"))
+    factorial.add_argument("--policies", type=Path, default=Path("configs/policies_week7.json"))
+    factorial.add_argument("--no-events", action="store_true", help="Do not write events.csv")
+    factorial.add_argument("--output", type=Path, default=Path("results/w2_factorial"))
     args = parser.parse_args()
     try:
         if args.command == "generate":
@@ -72,6 +78,13 @@ def main():
             return
         elif args.command == "week7":
             raw, comparison = run_week7(
+                args.config, args.system, args.policies, args.output,
+                keep_events=not args.no_events,
+            )
+            print(f"Raw summary: {raw}\nComparison: {comparison}")
+            return
+        elif args.command == "w2-factorial":
+            raw, comparison = run_w2_factorial(
                 args.config, args.system, args.policies, args.output,
                 keep_events=not args.no_events,
             )

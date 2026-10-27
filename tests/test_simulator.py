@@ -7,7 +7,7 @@ import tempfile
 import unittest
 
 from kvbench.engine import Simulator
-from kvbench.metrics import summarize
+from kvbench.metrics import occupancy_exposure, summarize
 from kvbench.policies import REGISTRY, make_policy
 from kvbench.simulate import collect, simulate, write_results
 from kvbench.system import SystemConfig, load_policy_params, load_system_config
@@ -84,6 +84,19 @@ class SimulatorTests(unittest.TestCase):
         _, first = self.run_policy("lru_offload", seed=3)
         _, second = self.run_policy("lru_offload", seed=3)
         self.assertEqual(first, second)
+
+    def test_time_weighted_occupancy_and_decision_diagnostics(self):
+        mean_pct, above_ms, above_pct = occupancy_exposure(
+            [(0, 0), (100, 10), (200, 0)], 10, 50, 250
+        )
+        self.assertEqual((mean_pct, above_ms, above_pct), (50, 100, 50))
+        sim, summary = self.run_policy("duration_aware")
+        detail = next(e[5] for e in sim.events if e[1] == "TOOL_START")
+        self.assertIn("headroom_pct=", detail)
+        self.assertIn("predicted_wait_ms=", detail)
+        self.assertIn("offload_oneway_ms=", detail)
+        self.assertIn("prefix_recompute_ms_est=", detail)
+        self.assertGreaterEqual(summary["kv_above_90_pct_of_time"], 0)
 
     def test_system_config_validation(self):
         for change in ({"block_size_tokens": 0}, {"decode_tokens_per_s": 0}, {"gpu_kv_pool_bytes": 1},

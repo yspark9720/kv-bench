@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from kvbench.experiment import run_ttl_sweep, run_week7
+from kvbench.experiment import W2_FACTORIAL_CONDITIONS, run_ttl_sweep, run_w2_factorial, run_week7
 from kvbench.system import load_policy_params
 from kvbench.workload import load_config
 
@@ -85,6 +85,31 @@ class ExperimentTests(unittest.TestCase):
                 rows = list(csv.DictReader(handle))
             self.assertEqual([row["ttl_ms"] for row in rows], ["1000", "3000"])
             self.assertTrue(all(float(row["eviction_count_mean"]) > 0 for row in rows))
+
+    def test_reduced_w2_factorial_outputs_paired_conditions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "factorial"
+            conditions = W2_FACTORIAL_CONDITIONS[:5]
+            raw, comparison = run_w2_factorial(
+                ROOT / "configs/week7.json",
+                ROOT / "configs/system_1080ti_llama3b.json",
+                ROOT / "configs/policies_week7.json",
+                output,
+                seeds=(0,), conditions=conditions,
+                policies=("fixed_ttl", "duration_aware"), keep_events=True,
+            )
+            with raw.open(newline="", encoding="utf-8") as handle:
+                rows = list(csv.DictReader(handle))
+            with comparison.open(newline="", encoding="utf-8") as handle:
+                comparisons = list(csv.DictReader(handle))
+            with (output / "slo_by_seed.csv").open(newline="", encoding="utf-8") as handle:
+                judgements = list(csv.DictReader(handle))
+            self.assertEqual(len(rows), 10)
+            self.assertEqual(len(comparisons), 10)
+            self.assertEqual(len(judgements), 10)
+            self.assertEqual({row["load"] for row in comparisons}, {item[0] for item in conditions})
+            self.assertTrue(all(float(row["measurement_end_ms"]) == 60000 for row in rows))
+            self.assertTrue((output / "runs" / "w2_s2_seed0__duration_aware" / "events.csv").exists())
 
 
 if __name__ == "__main__":

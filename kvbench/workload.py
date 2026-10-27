@@ -11,7 +11,9 @@ import random
 
 
 SCHEMA_VERSION = 1
-WORKLOADS = ("W0", "W1", "W2")
+WORKLOADS = ("W0", "W1", "W2_BURST", "W2_WAIT", "W2")
+BURST_WORKLOADS = ("W2_BURST", "W2")
+ALTERNATING_WAIT_WORKLOADS = ("W2_WAIT", "W2")
 STRESS_LEVELS = (1, 2, 4, 8)
 
 
@@ -126,7 +128,7 @@ def generate(config, workload="W0", stress_level=1, seed=0):
         for index, arrival in enumerate(_arrivals(arrival_rng, rate, config.duration_ms)):
             session_id = f"{request_class}-{index:06d}"
             burst_id = None
-            if request_class == "stress" and workload == "W2":
+            if request_class == "stress" and workload in BURST_WORKLOADS:
                 burst_id = int(arrival // config.w2_burst_period_ms)
                 start = burst_id * config.w2_burst_period_ms
                 # Compress even a partial final period into its burst window.
@@ -149,12 +151,12 @@ def generate(config, workload="W0", stress_level=1, seed=0):
                 wait = 0.0
                 if turn_id < turns - 1:
                     wait = float(content_rng.randint(*config.tool_duration_ms))
-                    if workload == "W1":
-                        wait *= stress_level
-                    elif workload == "W2":
+                    if workload in ALTERNATING_WAIT_WORKLOADS:
                         factor = (config.w2_short_wait_factor if turn_id % 2 == 0
                                   else config.w2_long_wait_factor)
                         wait *= factor * stress_level
+                    elif workload != "W0":
+                        wait *= stress_level
                 rows.append(Turn(
                     SCHEMA_VERSION, session_id, turn_id, f"{session_id}:{turn_id}",
                     request_class, seed, workload, stress_level, arrival,
@@ -203,8 +205,8 @@ def validate(rows):
             raise ValueError("depends_on_request_id must be null or string")
         if row.burst_id is not None and (type(row.burst_id) is not int or row.burst_id < 0):
             raise ValueError("burst_id must be null or nonnegative integer")
-        if (row.workload_id == "W2" and row.request_class == "stress") != (row.burst_id is not None):
-            raise ValueError("burst_id is required only for W2 stress sessions")
+        if (row.workload_id in BURST_WORKLOADS and row.request_class == "stress") != (row.burst_id is not None):
+            raise ValueError("burst_id is required only for burst stress sessions")
         if row.request_id in request_ids:
             raise ValueError(f"duplicate request_id: {row.request_id}")
         request_ids.add(row.request_id)
