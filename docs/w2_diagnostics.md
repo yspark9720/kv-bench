@@ -2,7 +2,7 @@
 
 이 실험은 기존 정책을 변경하지 않고 W2 결과의 원인을 점검한다. 실제 LLM 추론은 수행하지 않는다.
 
-이 문서는 조건 분리와 실행 방법을 설명한다. 세 설정의 실제 수치, 정책별 차이와 프로젝트 방향은 [9주차 실험·분석](week9_experiment.MD)에 정리한다.
+이 문서는 조건 분리와 실행 방법을 설명한다. 세 설정의 실제 수치, 정책별 차이와 프로젝트 방향은 [9주차 실험·분석](week9_experiment.md)에 정리한다.
 
 ## 비교 조건
 
@@ -36,7 +36,7 @@ python -m kvbench w2-factorial --output results/w2_factorial
 
 `notebooks/week9_60s_stress02_review.ipynb`는 이 출력에서 입력 대기 분포, 정책별 지표, SLO 통과 수, Peak 근처 이벤트를 한곳에 보여준다. 같은 분석 흐름을 180초 설정에 적용한 파일은 `notebooks/week9_180s_stress02_review.ipynb`와 `notebooks/week9_180s_stress03_review.ipynb`다.
 
-세 노트북은 각각 한 설정의 결과만 읽으며, 결과 폴더가 없을 때 해당 설정으로 실행한다. 공통 흐름은 입력 대기 분포 → SLO 요약 → seed별 상대·절대 지표 → 요인별 그래프 → Duration-Aware 결정 → Peak 이벤트 → 전체 표·그래프 → 인사이트다. 60초·0.2의 원본 출력은 `results/w2_factorial`, 두 180초 노트북은 각각 `results/w2_factorial_180s_stress02_review_20261027`, `results/w2_factorial_180s_stress03_review_20261027`을 사용한다. 설정 파일·출력·노트북의 대응과 새 경로를 사용하는 재현 명령은 [9주차 문서](week9_experiment.MD#2-설정과-결과-출처)를 참고한다.
+세 노트북은 각각 한 설정의 결과만 읽으며, 결과 폴더가 없을 때 해당 설정으로 실행한다. 공통 흐름은 입력 대기 분포 → SLO 요약 → seed별 상대·절대 지표 → 요인별 그래프 → Duration-Aware 결정 → Peak 이벤트 → 전체 표·그래프 → 인사이트다. 60초·0.2의 원본 출력은 `results/w2_factorial`, 두 180초 노트북은 각각 `results/w2_factorial_180s_stress02_review_20261027`, `results/w2_factorial_180s_stress03_review_20261027`을 사용한다. 설정 파일·출력·노트북의 대응과 새 경로를 사용하는 재현 명령은 [9주차 문서](week9_experiment.md#2-설정과-결과-출처)를 참고한다.
 
 Peak 근처 이벤트와 정책 결정 분석에는 `events.csv`가 필요하다. 리뷰 노트북용 실험을 생성할 때는 `--no-events`를 사용하지 않는다. 결과 폴더가 존재한다는 사실만으로 실행이 완전하다고 보장되지는 않으므로 manifest·225회 summary·이벤트 파일을 함께 확인한다.
 
