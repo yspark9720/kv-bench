@@ -6,7 +6,8 @@
 
 - **계획에서 정한 성공 판정을 충족했다.** 주 결과인 180초 · 0.2 에서 Watermark Offload 는 9조건 모두 SLO 통과 seed 수가 Evict/Recompute 이상, 재계산 0, normal P95 TTFT 는 9조건 모두 Evict 보다 짧다(약 0.25 ~ 0.31 s 대 0.59 ~ 0.85 s).
 - **대조군이 원인을 가른다.** 같은 90 % 상한에 회수만 뺀 Pin-All + 상한은 TTFT 가 입장 제한(30 s) 근처까지 늘고 거절이 13 ~ 21 % 다. 효과를 낸 것은 상한 자체가 아니라 **상한 + 오래 기다린 세션의 offload** 조합이다.
-- **대가는 전송이다.** 같은 조건에서 LRU Offload 보다 전송이 약 10 ~ 50 % 많고(Duration-Aware 보다는 적다), 재계산은 0 이다.
+- **대가는 전송이다.** 9조건 평균으로 LRU Offload 보다 전송이 21 ~ 81 % 많고(주 결과 180초 · 0.2 에서 +30 %, both_4x 만 보면 +11 ~ 51 %), Duration-Aware 보다는 적다. 재계산은 0 이다.
+- **처음 보는 seed 10개(5 ~ 14)에서도 주 결과가 유지된다.** 180초 · 0.2 에서 9조건 모두 10/10 (7절).
 - **남은 실패는 모두 seed 0 의 상대 TTFT 기준이다.** 거절 · 점유율은 전부 통과했고 절대 TTFT 는 같은 조건의 Evict 보다 짧다. 기준값(같은 정책 W0 의 P95)이 0.11 ~ 0.19 s 로 낮아 3배를 조금 넘었다.
 - 최고 점유율 ≤ 90 % 는 상한의 정의상 보장되므로 이 실험이 보인 것은 **90 % 여유를 강제할 때의 비용(지연 · 거절 · 전송)** 이다.
 
@@ -134,8 +135,46 @@
 - seed 5개를 9주차와 공유한 짝지은 비교다. 통계적 유의성은 검정하지 않았고, 파라미터 선택 seed 와 평가 seed 를 분리하지 않았다(상한 0.9 는 SLO 에서 가져와 튜닝하지 않았다).
 - prefill 단일 FIFO, 세션 간 decode 경합 없음 등 시뮬레이터 가정은 9주차와 같다. 4절의 burst TTFT 는 이 prefill 모델의 영향을 받는다.
 - 상한은 입장 판단에만 적용된다. offload 중인 블록은 전송이 끝날 때까지 사용 중으로 센다.
+- 엔진의 회수는 전송 중인 offload 블록을 부족분에서 빼지 않아, 이미 충분히 비우는 중에도 세션을 더 옮길 때가 있다. 기존 LRU Offload 에도 같은 동작이며, 제거해도 전송이 0 ~ 11 % 줄 뿐 SLO 통과 수는 같다(7절).
 
-## 7. 다음
+## 7. 검증 (2026-10-29)
+
+결과를 발표에 쓰기 전에 다섯 가지를 확인했다.
+
+1. **상한 불변식.** 세 설정의 `watermark_offload` · `pin_all_capped` 270 runs 의 `occupancy.csv` 전체에서 사용 블록이 `floor(0.9 × 2,340) = 2,106` 을 넘은 순간은 0 번.
+2. **기존 정책 결과 보존.** 엔진 변경 후 기존 다섯 정책만 돌린 결과가 9주차 코드(`9cfe29d`)와 세 설정 모두 바이트 단위로 같다(`summary.csv` · `comparison.csv` · `slo_by_seed.csv` SHA-256 일치).
+3. **회수 시 이중 계산.** 입장 대기 중 회수가 다시 호출될 때 전송 중인 블록을 부족분에서 빼지 않아 추가로 옮기는 경우가 회수 호출의 약 20 ~ 25 % 였다(LRU 와 Watermark 모두). 검증용으로 이를 뺀 엔진(커밋하지 않음)과 비교:
+
+| 설정 | 정책 | 전송 GiB/run (현행) | 전송 GiB/run (이중 계산 제거) | 감소 | SLO 통과 (현행) | SLO 통과 (제거) |
+|---|---|---|---|---|---|---|
+| 60초·0.2 | Duration-Aware | 4.57 | 4.57 | -0.0 % | 24/45 | 24/45 |
+| 60초·0.2 | LRU Offload | 1.57 | 1.4 | 10.9 % | 11/45 | 11/45 |
+| 60초·0.2 | Watermark Offload (제안) | 2.83 | 2.6 | 8.3 % | 41/45 | 41/45 |
+| 180초·0.2 | Duration-Aware | 26.18 | 26.09 | 0.3 % | 4/45 | 4/45 |
+| 180초·0.2 | LRU Offload | 16.13 | 15.49 | 4.0 % | 3/45 | 3/45 |
+| 180초·0.2 | Watermark Offload (제안) | 20.94 | 20.36 | 2.8 % | 44/45 | 44/45 |
+
+   전송만 조금 줄고 SLO 통과 수는 같다. 결론에 영향 없음. 기존 엔진 동작이라 팀 코드는 그대로 두고 알려진 한계로 기록한다.
+
+4. **처음 보는 seed.** 계획 · 결과에 쓰지 않은 seed 5 ~ 14 (10개)로 같은 매트릭스를 다시 돌렸다(설정 · 상한 변경 없음). 180초 · 0.2:
+
+| 정책 | w0_1x | base_2x | base_4x | burst_2x | burst_4x | wait_2x | wait_4x | both_2x | both_4x |
+|---|---|---|---|---|---|---|---|---|---|
+| Pin-All | 2/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 |
+| Evict/Recompute | 6/10 | 5/10 | 10/10 | 6/10 | 8/10 | 7/10 | 9/10 | 7/10 | 9/10 |
+| Fixed TTL | 3/10 | 0/10 | 1/10 | 0/10 | 1/10 | 2/10 | 3/10 | 4/10 | 1/10 |
+| LRU Offload | 2/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 |
+| Duration-Aware | 8/10 | 2/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 |
+| **Watermark Offload (제안)** | 10/10 | 10/10 | 10/10 | 10/10 | 10/10 | 10/10 | 10/10 | 10/10 | 10/10 |
+| Pin-All + 상한 (대조) | 9/10 | 1/10 | 0/10 | 1/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 |
+
+   계획의 판정(통과 수 ≥ Evict, TTFT ≤ Evict, 재계산 0)이 9조건 모두 성립한다. 180초 · 0.3 도 성립, 60초 · 0.2 는 burst · both 4조건에서 8/10 으로 Evict(10/10)보다 적다. 이 실패 8건도 모두 **TTFT 상대 기준**(W0 대비 5.3 ~ 5.7배, 거절 0, Peak ≤ 90 %)이며, 같은 run 의 절대 P95 는 Watermark 418 ~ 516 ms, Evict 421 ~ 703 ms 로 Watermark 가 짧거나 같다.
+
+5. **문서 숫자.** 이 문서의 표는 결과 CSV 에서 스크립트로 생성했고, 본문 수치는 CSV 와 다시 대조했다. 전송 증가율은 대표 조건(both_4x)이 아니라 9조건 평균으로 고쳤다.
+
+**검증에서 얻은 추가 관찰.** 남은 실패가 모두 "W0 가 빠른 정책에 상대 TTFT 기준이 엄격하게 작동"하는 같은 모양이다. 판정 기준은 팀 기준이라 바꾸지 않지만, 절대 TTFT 기준을 함께 보고하자는 제안은 팀원과 논의할 거리다(9주차 문서 3절도 같은 점을 지적).
+
+## 8. 다음
 
 1. 이 결과를 팀 판정 기준 · 설정과 함께 11/11 결과 발표에 넣는다(9주차 W2 분해 → 10주차 제안 정책 순서).
 2. 가정 민감도: PCIe 3 · 6 GB/s, CPU 풀 8 · 16 GiB 에서 Watermark vs Evict 순위가 유지되는지 (별도 계획 문서를 먼저 쓴다).
@@ -148,6 +187,15 @@ $P = "pin_all,evict_recompute,fixed_ttl,lru_offload,duration_aware,watermark_off
 python -m kvbench w2-factorial --config configs/week7.json --policy-names $P --output results/week10_week7
 python -m kvbench w2-factorial --config configs/week7_180s_stress02.json --policy-names $P --output results/week10_week7_180s_stress02
 python -m kvbench w2-factorial --config configs/week7_180s_stress03.json --policy-names $P --output results/week10_week7_180s_stress03
+```
+
+처음 보는 seed 검증(7절 4)은 CLI 에 seed 인자가 없어 Python 에서 실행한다:
+
+```python
+from kvbench.experiment import run_w2_factorial
+P = ("pin_all", "evict_recompute", "fixed_ttl", "lru_offload", "duration_aware", "watermark_offload", "pin_all_capped")
+run_w2_factorial("configs/week7_180s_stress02.json", "configs/system_1080ti_llama3b.json", "configs/policies_week7.json",
+                 "results/week10_holdout_week7_180s_stress02", seeds=tuple(range(5, 15)), policies=P, keep_events=False)
 ```
 
 기존 다섯 정책의 결과는 9주차 코드와 바이트 단위로 같다(60초 · 0.2 의 `summary.csv` · `comparison.csv` · `slo_by_seed.csv` SHA-256 일치).
