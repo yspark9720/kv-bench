@@ -4,7 +4,10 @@ import argparse
 import json
 from pathlib import Path
 
-from .experiment import W2_FACTORIAL_POLICIES, run_ttl_sweep, run_w2_factorial, run_week7
+from .experiment import (
+    COST_SENSITIVITY_POLICIES, W2_FACTORIAL_POLICIES, run_cost_sensitivity, run_ttl_sweep, run_w2_factorial,
+    run_week7,
+)
 from .policies import REGISTRY
 from .simulate import collect, simulate, write_results
 from .system import load_policy_params, load_system_config
@@ -53,6 +56,15 @@ def main():
                            help="Comma-separated policies to run, default the five week-9 policies")
     factorial.add_argument("--no-events", action="store_true", help="Do not write events.csv")
     factorial.add_argument("--output", type=Path, default=Path("results/w2_factorial"))
+    sens = commands.add_parser("cost-sensitivity", help="Repeat w2-factorial over PCIe speed x CPU pool size")
+    sens.add_argument("--config", type=Path, default=Path("configs/week7_180s_stress02.json"))
+    sens.add_argument("--system", type=Path, default=Path("configs/system_1080ti_llama3b.json"))
+    sens.add_argument("--policies", type=Path, default=Path("configs/policies_week7.json"))
+    sens.add_argument("--policy-names", default=",".join(COST_SENSITIVITY_POLICIES))
+    sens.add_argument("--pcie-gbps", default="12,6,3,1.5", help="Comma-separated one-way PCIe GB/s")
+    sens.add_argument("--cpu-gib", default="64,4,2,1", help="Comma-separated CPU KV pool GiB")
+    sens.add_argument("--seeds", default="0-14", help="Seed range a-b or comma list")
+    sens.add_argument("--output", type=Path, default=Path("results/cost_sensitivity"))
     args = parser.parse_args()
     try:
         if args.command == "generate":
@@ -95,6 +107,24 @@ def main():
                 policies=names, keep_events=not args.no_events,
             )
             print(f"Raw summary: {raw}\nComparison: {comparison}")
+            return
+        elif args.command == "cost-sensitivity":
+            names = tuple(name.strip() for name in args.policy_names.split(",") if name.strip())
+            unknown = sorted(set(names) - set(REGISTRY))
+            if unknown:
+                raise ValueError(f"unknown policies: {unknown}")
+            if "-" in args.seeds:
+                low, high = (int(x) for x in args.seeds.split("-"))
+                seeds = tuple(range(low, high + 1))
+            else:
+                seeds = tuple(int(x) for x in args.seeds.split(","))
+            output = run_cost_sensitivity(
+                args.config, args.system, args.policies, args.output,
+                pcie_gbps=tuple(float(x) for x in args.pcie_gbps.split(",")),
+                cpu_gib=tuple(float(x) for x in args.cpu_gib.split(",")),
+                seeds=seeds, policies=names,
+            )
+            print(f"Sensitivity: {output}")
             return
         else:
             raw, comparison = run_ttl_sweep(args.config, args.system, args.output)

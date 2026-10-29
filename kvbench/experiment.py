@@ -286,3 +286,40 @@ def run_ttl_sweep(config_path, system_path, output_dir,
         writer.writeheader()
         writer.writerows(output_rows)
     return raw_summary, comparison
+
+
+COST_SENSITIVITY_POLICIES = ("watermark_offload", "lru_offload", "duration_aware")
+
+
+def run_cost_sensitivity(config_path, system_path, policies_path, output_dir,
+                         pcie_gbps=(12, 6, 3, 1.5), cpu_gib=(64, 4, 2, 1), seeds=tuple(range(15)),
+                         conditions=W2_FACTORIAL_CONDITIONS, policies=COST_SENSITIVITY_POLICIES,
+                         keep_events=False):
+    """Repeat the W2 factorial for every PCIe speed x CPU pool size and merge comparison rows.
+
+    Only these two system values change; each combination keeps its own system JSON and full
+    w2-factorial output. Returns the merged sensitivity.csv path."""
+    output_dir = Path(output_dir)
+    if output_dir.exists():
+        raise ValueError("output already exists; choose a new path")
+    (output_dir / "systems").mkdir(parents=True)
+    base = asdict(load_system_config(system_path))
+    merged = []
+    for pcie in pcie_gbps:
+        for cpu in cpu_gib:
+            name = f"pcie{pcie:g}_cpu{cpu:g}"
+            system_file = output_dir / "systems" / f"{name}.json"
+            system = dict(base, pcie_bytes_per_s=float(pcie) * 1e9, cpu_kv_pool_bytes=int(float(cpu) * 2**30))
+            system_file.write_text(json.dumps(system, indent=2) + "\n", encoding="utf-8")
+            _, comparison = run_w2_factorial(config_path, system_file, policies_path, output_dir / name,
+                                             seeds=seeds, conditions=conditions, policies=policies,
+                                             keep_events=keep_events)
+            with Path(comparison).open(newline="", encoding="utf-8") as handle:
+                for row in csv.DictReader(handle):
+                    merged.append({"pcie_gbps": pcie, "cpu_gib": cpu, **row})
+    output = output_dir / "sensitivity.csv"
+    with output.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(merged[0]))
+        writer.writeheader()
+        writer.writerows(merged)
+    return output

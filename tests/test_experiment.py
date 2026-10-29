@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from kvbench.experiment import W2_FACTORIAL_CONDITIONS, run_ttl_sweep, run_w2_factorial, run_week7
+from kvbench.experiment import W2_FACTORIAL_CONDITIONS, run_cost_sensitivity, W2_FACTORIAL_CONDITIONS, run_ttl_sweep, run_w2_factorial, run_week7
 from kvbench.system import load_policy_params
 from kvbench.workload import load_config
 
@@ -68,6 +68,23 @@ class ExperimentTests(unittest.TestCase):
                 rows = list(csv.DictReader(handle))
             self.assertEqual(len(rows), 12)
             self.assertEqual({row["load"] for row in rows if row["policy"] == "lru_offload"}, {"1x", "2x", "4x"})
+
+    def test_reduced_cost_sensitivity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = run_cost_sensitivity(
+                ROOT / "configs/week7.json", ROOT / "configs/system_1080ti_llama3b.json",
+                ROOT / "configs/policies_week7.json", Path(directory) / "sens",
+                pcie_gbps=(12, 1.5), cpu_gib=(64, 1), seeds=(0,),
+                conditions=W2_FACTORIAL_CONDITIONS[:1], policies=("watermark_offload",),
+            )
+            with output.open(newline="", encoding="utf-8") as handle:
+                rows = list(csv.DictReader(handle))
+            self.assertEqual(len(rows), 4)
+            self.assertEqual({(r["pcie_gbps"], r["cpu_gib"]) for r in rows},
+                             {("12", "64"), ("12", "1"), ("1.5", "64"), ("1.5", "1")})
+            system = json.loads((Path(directory) / "sens/systems/pcie1.5_cpu1.json").read_text(encoding="utf-8"))
+            self.assertEqual(system["pcie_bytes_per_s"], 1.5e9)
+            self.assertEqual(system["cpu_kv_pool_bytes"], 2**30)
 
     def test_reduced_ttl_sweep(self):
         with tempfile.TemporaryDirectory() as directory:
