@@ -114,6 +114,14 @@ python -m kvbench w2-factorial --output results/w2_factorial
 
 조건·지표·해석 범위는 [W2 진단 문서](docs/w2_diagnostics.md)에 있습니다. 설정별 표와 그림은 `notebooks/week9_60s_stress02_review.ipynb`, `notebooks/week9_180s_stress02_review.ipynb`, `notebooks/week9_180s_stress03_review.ipynb`에서 확인할 수 있습니다. 기존 출력 경로가 있으면 새 경로를 지정합니다.
 
+### 10주차: 입장 상한 Offload
+
+9주차 매트릭스에 제안 정책 `watermark_offload`와 대조군 `pin_all_capped`를 더해 7정책 × 9조건 × 5 seed를 재생합니다. 계획(실험 전 확정)은 [10주차 계획](docs/week10_plan.md), 결과는 [10주차 실험 문서](docs/week10_experiment.md)에 있습니다.
+
+```powershell
+python -m kvbench w2-factorial --config configs/week7_180s_stress02.json --policy-names pin_all,evict_recompute,fixed_ttl,lru_offload,duration_aware,watermark_offload,pin_all_capped --output results/week10_180s_stress02
+```
+
 ### 9주차: 기간·stress 도착률 비교
 
 세 노트북은 각각 해당 설정의 225회 결과를 읽습니다. 위에서부터 실행하면 저장된 결과를 검증·분석하고, 지정한 결과 폴더가 없을 때만 실험을 생성합니다. 마지막 9절에는 정책별 인사이트와 도구 대기를 제외한 작업시간 보조 진단이 있습니다.
