@@ -4,7 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
-from .experiment import run_ttl_sweep, run_w2_factorial, run_week7
+from .experiment import W2_FACTORIAL_POLICIES, run_ttl_sweep, run_w2_factorial, run_week7
 from .policies import REGISTRY
 from .simulate import collect, simulate, write_results
 from .system import load_policy_params, load_system_config
@@ -49,6 +49,8 @@ def main():
     factorial.add_argument("--config", type=Path, default=Path("configs/week7.json"))
     factorial.add_argument("--system", type=Path, default=Path("configs/system_1080ti_llama3b.json"))
     factorial.add_argument("--policies", type=Path, default=Path("configs/policies_week7.json"))
+    factorial.add_argument("--policy-names", default=",".join(W2_FACTORIAL_POLICIES),
+                           help="Comma-separated policies to run, default the five week-9 policies")
     factorial.add_argument("--no-events", action="store_true", help="Do not write events.csv")
     factorial.add_argument("--output", type=Path, default=Path("results/w2_factorial"))
     args = parser.parse_args()
@@ -84,9 +86,13 @@ def main():
             print(f"Raw summary: {raw}\nComparison: {comparison}")
             return
         elif args.command == "w2-factorial":
+            names = tuple(name.strip() for name in args.policy_names.split(",") if name.strip())
+            unknown = sorted(set(names) - set(REGISTRY))
+            if unknown:
+                raise ValueError(f"unknown policies: {unknown}")
             raw, comparison = run_w2_factorial(
                 args.config, args.system, args.policies, args.output,
-                keep_events=not args.no_events,
+                policies=names, keep_events=not args.no_events,
             )
             print(f"Raw summary: {raw}\nComparison: {comparison}")
             return

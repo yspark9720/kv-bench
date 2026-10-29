@@ -1,5 +1,6 @@
 from dataclasses import asdict, replace
 import json
+import math
 from pathlib import Path
 import subprocess
 import sys
@@ -15,7 +16,8 @@ from kvbench.workload import generate, load_config, write_trace
 
 
 ROOT = Path(__file__).resolve().parents[1]
-POLICIES = ["pin_all", "evict_recompute", "fixed_ttl", "lru_offload", "duration_aware"]
+POLICIES = ["pin_all", "evict_recompute", "fixed_ttl", "lru_offload", "duration_aware",
+            "watermark_offload", "pin_all_capped"]
 
 
 class SimulatorTests(unittest.TestCase):
@@ -70,6 +72,26 @@ class SimulatorTests(unittest.TestCase):
         _, summary = self.run_policy("lru_offload")
         self.assertGreaterEqual(summary["offload_count"], 1)
         self.assertGreater(summary["transfer_bytes"], 0)
+
+    def test_admission_ceiling_caps_occupancy(self):
+        lru, _ = self.run_policy("lru_offload")
+        self.assertGreater(max(used for _, used in lru.gpu.samples), math.floor(lru.gpu.total_blocks * 0.9))
+        for policy in ("watermark_offload", "pin_all_capped"):
+            with self.subTest(policy=policy):
+                sim, summary = self.run_policy(policy)
+                limit = math.floor(sim.gpu.total_blocks * 0.9)
+                self.assertLessEqual(max(used for _, used in sim.gpu.samples), limit)
+                self.assertLessEqual(summary["peak_kv_occupancy_pct"], 90)
+
+    def test_watermark_offload_reclaims_instead_of_waiting(self):
+        _, capped = self.run_policy("pin_all_capped")
+        _, watermark = self.run_policy("watermark_offload")
+        self.assertEqual(capped["offload_count"], 0)
+        self.assertGreater(watermark["offload_count"], 0)
+        self.assertEqual(watermark["recomputed_tokens"], 0)
+        self.assertLessEqual(watermark["rejected_jobs"], capped["rejected_jobs"])
+        with self.assertRaises(ValueError):
+            make_policy("watermark_offload", {"admission_ceiling": 1.5})
 
     def test_dynamic_ttl_is_a_stub(self):
         with self.assertRaises(NotImplementedError):

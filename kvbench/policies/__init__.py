@@ -9,8 +9,10 @@ from .evict_recompute import EvictRecompute
 from .fixed_ttl import FixedTTL
 from .lru_offload import LruOffload
 from .pin_all import PinAll
+from .watermark_offload import CappedPinAll, WatermarkOffload
 
-REGISTRY = {cls.name: cls for cls in (PinAll, EvictRecompute, FixedTTL, LruOffload, DynamicTTL, DurationAware)}
+REGISTRY = {cls.name: cls for cls in (PinAll, EvictRecompute, FixedTTL, LruOffload, DynamicTTL, DurationAware,
+                                      WatermarkOffload, CappedPinAll)}
 
 
 def make_policy(name, params=None):

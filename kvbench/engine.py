@@ -21,6 +21,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
 import heapq
+import math
 
 from .policies import Action, IdleView, PolicyContext
 from .resources import CpuPool, FifoServer, GpuPool
@@ -227,15 +228,21 @@ class Simulator:
                 self.admission_queue.popleft()
                 continue
             need = self._needed_blocks(s)
-            if not self.gpu.can_alloc(need):
-                shortfall = need - self.gpu.free_blocks
+            if need > self._admit_room():
+                shortfall = need - self._admit_room()
                 victims = self.policy.select_victims(shortfall, self._idle_candidates(s.sid), self._ctx())
                 self._apply_victims(victims)
-            if self.gpu.can_alloc(need):
+            if need <= self._admit_room():
                 self.admission_queue.popleft()
                 self._admit(s, need)
             else:
                 break   # FIFO: the head waits, so does everyone behind it
+
+    def _admit_room(self):
+        """Blocks a new admission may take: free blocks up to the policy's admission ceiling (1.0 = whole pool)."""
+        ceiling = getattr(self.policy, "admission_ceiling", 1.0)
+        limit = math.floor(self.gpu.total_blocks * ceiling)
+        return min(limit - self.gpu.used_blocks, self.gpu.free_blocks)
 
     def _apply_victims(self, victims):
         for sid, action in victims:

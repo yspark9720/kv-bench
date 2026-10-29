@@ -36,6 +36,8 @@ GPU -(evict)-> NONE
 | `lru_offload` | 유지 | 가장 오래 idle인 세션부터 CPU로 | CPU에서 재적재 | 메모리 부족 시 반응하는 offload 기준선 |
 | `dynamic_ttl` | 미구현 | | | 실행 대상에서 제외 |
 | `duration_aware` | 여유 있으면 유지, 아니면 예측 대기로 OFFLOAD/EVICT 선택 | 남은 대기가 긴 세션부터 정리 | 재적재 또는 재계산 | 실제 미래 대기를 입력으로 쓰는 단순화한 참조 정책 |
+| `watermark_offload` | 유지 | 입장 상한(기본 90 %)을 넘을 입장이면 가장 오래 idle인 세션부터 CPU로 | CPU에서 재적재 | 10주차 제안: 상한 + offload 회수 ([계획](week10_plan.md)) |
+| `pin_all_capped` | 유지 | 입장 상한(기본 90 %)을 두고 회수 없이 대기 · 거절 | 보존 KV 재사용 | `watermark_offload`의 대조군 (상한만) |
 
 각 이름은 이 저장소의 단순화한 구현을 뜻하며 외부 추론 엔진이나 논문 전체를 그대로 재현했다는 의미는 아닙니다. `duration_aware`는 headroom이 설정값(현재 30%) 이상이면 KEEP하고, 그렇지 않으면 예상 대기와 전송 왕복시간·CPU 여유를 사용해 OFFLOAD/EVICT를 선택합니다. 로그의 재계산 추정값은 현재 이 선택식에 직접 사용하지 않습니다. oracle 입력을 사용한다는 사실도 이 휴리스틱이 최적 정책이라는 의미는 아닙니다.
 
@@ -43,7 +45,7 @@ GPU -(evict)-> NONE
 
 턴이 입장할 때 `context_tokens + output_tokens`만큼의 block을 한 번에 예약합니다. KV가 GPU에 남아 있으면 새 `prompt_tokens`만 prefill하고, 삭제됐으면 `context_tokens - prompt_tokens`를 재계산한 뒤 prompt를 prefill합니다. 이 규칙은 [트레이스 스키마](trace_schema.md)의 정의를 그대로 따릅니다. block 크기는 시스템 설정의 `block_size_tokens`이고 올림 처리합니다.
 
-offload를 시작한 순간에는 GPU block이 비워지지 않고, 전송 완료 시 회수됩니다. 현재 입장 로직은 실제 풀 용량 100% 안에서 예약하며, 평가 SLO의 90%는 별도의 여유 공간 목표입니다. 따라서 낮은 normal TTFT와 Peak ≤ 90% 달성은 서로 다른 결과입니다.
+offload를 시작한 순간에는 GPU block이 비워지지 않고, 전송 완료 시 회수됩니다. 입장 로직은 정책의 `admission_ceiling`(기본 1.0 = 풀 용량 100%) 안에서 예약하며, 평가 SLO의 90%는 별도의 여유 공간 목표입니다. 따라서 기존 정책에서는 낮은 normal TTFT와 Peak ≤ 90% 달성이 서로 다른 결과입니다. `watermark_offload`·`pin_all_capped`는 상한을 0.9로 두어 입장 후 사용 block이 `floor(0.9 × 전체)`를 넘지 않게 하고, 상한을 넘을 입장이 있으면 `select_victims`를 상한 기준 부족분으로 호출합니다. 상한 1.0의 기존 정책 결과는 바뀌지 않습니다.
 
 ## 단순화 가정
 
