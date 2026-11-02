@@ -252,6 +252,7 @@ W2_BURST는 W2의 도착 시각만, W2_WAIT는 W2의 도구 대기 규칙만 적
 | `notebooks/week9_60s_stress02_review.ipynb` | 9주차: 60초·stress 0.2/s, 225회 요인 분리 및 정책 분석 |
 | `notebooks/week9_180s_stress02_review.ipynb` | 9주차: 180초·stress 0.2/s, 장시간 부하와 Peak 진단 |
 | `notebooks/week9_180s_stress03_review.ipynb` | 9주차: 180초·stress 0.3/s, 과부하에서 지연·거절·비용 분석 |
+| `notebooks/week10_watermark_review.ipynb` | 10주차: 원인(입장 100 %) → 입장 상한 Offload 제안 · 대조군 → 945 runs 결과 → 상한 불변식 · 처음 보는 seed 검증 → PCIe · CPU 비용 민감도 |
 
 `workload.py`의 주요 구성은 다음과 같습니다.
 
