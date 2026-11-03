@@ -118,6 +118,10 @@ python -m kvbench w2-factorial --output results/w2_factorial
 
 9주차 매트릭스에 제안 정책 `watermark_offload`와 대조군 `pin_all_capped`를 더해 7정책 × 9조건 × 5 seed를 재생합니다. 계획(실험 전 확정)은 [10주차 계획](docs/week10_plan.md), 결과는 [10주차 실험 문서](docs/week10_experiment.md)에 있습니다.
 
+후속으로 입장 상한 80·85·90·95·100%와 LRU를 비교한 실험은 [상한 민감도 계획](docs/week10_watermark_ceiling_plan.md)과 [결과·그래프](docs/week10_watermark_ceiling.md)에 정리했습니다.
+
+[상한 변경 리뷰 노트북](notebooks/week10_watermark_ceiling_review.ipynb)에서 원자료로 표·그래프를 다시 계산하고, 같은 조건의 실험을 새 경로에 재현할 수 있습니다.
+
 ```powershell
 python -m kvbench w2-factorial --config configs/week7_180s_stress02.json --policy-names pin_all,evict_recompute,fixed_ttl,lru_offload,duration_aware,watermark_offload,pin_all_capped --output results/week10_180s_stress02
 ```
@@ -253,6 +257,7 @@ W2_BURST는 W2의 도착 시각만, W2_WAIT는 W2의 도구 대기 규칙만 적
 | `notebooks/week9_180s_stress02_review.ipynb` | 9주차: 180초·stress 0.2/s, 장시간 부하와 Peak 진단 |
 | `notebooks/week9_180s_stress03_review.ipynb` | 9주차: 180초·stress 0.3/s, 과부하에서 지연·거절·비용 분석 |
 | `notebooks/week10_watermark_review.ipynb` | 10주차: 원인(입장 100 %) → 입장 상한 Offload 제안 · 대조군 → 945 runs 결과 → 상한 불변식 · 처음 보는 seed 검증 → PCIe · CPU 비용 민감도 |
+| `notebooks/week10_watermark_ceiling_review.ipynb` | 후속: Watermark 상한 80·85·90·95·100%와 LRU의 2,430회 비교, 전송·복귀 지연·상대 SLO 분석 및 재현 |
 
 `workload.py`의 주요 구성은 다음과 같습니다.
 
