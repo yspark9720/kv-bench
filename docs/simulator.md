@@ -35,6 +35,9 @@ GPU -(evict)-> NONE
 | `fixed_ttl` | `ttl_ms` 동안 유지 후 삭제 | 기본은 대기 (`evict_on_pressure`로 변경) | 유지 중이면 재사용, 삭제됐으면 재계산 | 고정 idle TTL 기준선 |
 | `lru_offload` | 유지 | 가장 오래 idle인 세션부터 CPU로 | CPU에서 재적재 | 메모리 부족 시 반응하는 offload 기준선 |
 | `dynamic_ttl` | 미구현 | | | 실행 대상에서 제외 |
+| `tlru` | 유지 | TEL-safe block부터 부분 삭제, 이후 block LRU | 남은 GPU KV 재사용 + 없는 토큰 재계산 | 11주차 tail-aware 보관 |
+| `hotprefix_admission` | 유지 | 기본 block LRU; 빈도·hotness로 CPU 보관/삭제 | GPU·CPU 잔존 KV 복원 + 부분 재계산 | 11주차 선택적 CPU 보관 |
+| `prefix_lru_evict` / `prefix_lru_offload` | 유지 | 같은 block 엔진의 LRU 삭제/CPU 보관 | 부분 재계산 또는 reload | 새 정책의 공정한 기준선 |
 | `duration_aware` | 여유 있으면 유지, 아니면 예측 대기로 OFFLOAD/EVICT 선택 | 남은 대기가 긴 세션부터 정리 | 재적재 또는 재계산 | 실제 미래 대기를 입력으로 쓰는 단순화한 참조 정책 |
 | `watermark_offload` | 유지 | 입장 상한(기본 90 %)을 넘을 입장이면 가장 오래 idle인 세션부터 CPU로 | CPU에서 재적재 | 10주차 제안: 상한 + offload 회수 ([계획](week10_plan.md)) |
 | `pin_all_capped` | 유지 | 입장 상한(기본 90 %)을 두고 회수 없이 대기 · 거절 | 보존 KV 재사용 | `watermark_offload`의 대조군 (상한만) |

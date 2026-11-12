@@ -1,0 +1,13 @@
+{
+  "runs": 7290,
+  "suites": {
+    "ablation": 810,
+    "hardware": 2025,
+    "main": 4455
+  },
+  "unique_input_traces": 405,
+  "all_paired_inputs_identical": true,
+  "all_source_hashes_match": true,
+  "selective_off_exact_matches": 135,
+  "cpu_free_hardware_exact_matches": 810
+}

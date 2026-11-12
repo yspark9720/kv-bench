@@ -1,0 +1,22 @@
+{
+  "date": "2026-11-12",
+  "status": "passed",
+  "legacy_cases": 945,
+  "legacy_all_identical": true,
+  "baseline_origin_commit": "c821a298f8ed8730ed4019adf6a74541d7ae659e",
+  "baseline_sha256": "87c7155370e800c99361bf7c5e3dcee79f95a4e686feb954ad673fd80a235145",
+  "verified_fields": [
+    "legacy summary",
+    "request records",
+    "GPU occupancy samples",
+    "complete events"
+  ],
+  "unit_and_integration_tests_passed": 52,
+  "randomized_event_conservation_replays": 120,
+  "counterfactual_future_policy_checks": 4,
+  "cli_smoke_policies": [
+    "tlru",
+    "hotprefix_admission"
+  ],
+  "verify_command": "python scripts/verify_week11_regression.py docs/data/week11/legacy_fingerprints.json"
+}

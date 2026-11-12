@@ -79,7 +79,7 @@ python -m kvbench collect results/w2_factorial/runs --output results/w2_factoria
 | 옵션 | 의미 | 기본값 |
 |---|---|---|
 | `--trace` | 생성기가 만든 `.jsonl` 경로. 같은 이름의 `.meta.json`에서 `warmup_ms`를 읽음 | 필수 |
-| `--policy` | pin_all, evict_recompute, fixed_ttl, lru_offload, duration_aware, dynamic_ttl(미구현) | 필수 |
+| `--policy` | 기존 7개 정책, tlru, hotprefix_admission, prefix_lru_evict, prefix_lru_offload. dynamic_ttl은 미구현. 전체 이름은 simulate --help 참조 | 필수 |
 | `--system` | 시스템 파라미터 JSON | `configs/system_1080ti_llama3b.json` |
 | `--policies` | 정책 파라미터 JSON. 파일이 없으면 정책 기본값 | `configs/policies.json` |
 | `--warmup-ms` | 메타데이터의 `warmup_ms` 대신 쓸 값 | 메타데이터 값 |
@@ -87,6 +87,22 @@ python -m kvbench collect results/w2_factorial/runs --output results/w2_factoria
 | `--output` | 이 run의 결과 디렉터리 | 필수 |
 
 결과 디렉터리가 이미 있으면 덮어쓰지 않고 종료합니다. 정책 동작, 지표 정의, 출력 파일은 [시뮬레이터 문서](docs/simulator.md)에 정리돼 있습니다.
+
+### 11주차: T-LRU와 선택적 CPU 보관
+
+T-LRU의 부분 GPU 보관과 HotPrefix §3.2–3.3의 선택적 CPU 보관을 기존 workload에서 비교합니다. HotPrefix 전체 시스템이나 실제 CUDA 성능의 재현은 아닙니다.
+
+- [결과와 결론](docs/week11_experiment.md) · [구현 명세](docs/week11_policy_implementation.md) · [사전 계획](docs/week11_policy_plan.md)
+- [실행된 분석 노트북](notebooks/week11_policy_review.ipynb) · [공유용 CSV·manifest](docs/data/week11)
+- 새 정책: `tlru`, `hotprefix_admission`. 같은 block 엔진의 기준선: `prefix_lru_evict`, `prefix_lru_offload`.
+
+```powershell
+python scripts/run_week11.py --output results/week11_new --workers 4
+python scripts/report_week11.py results/week11_new
+python scripts/build_week11_notebook.py
+```
+
+시뮬레이터/실험 실행은 표준 라이브러리만 사용합니다. 그림·노트북 생성에는 pandas, matplotlib, nbformat, IPython이 필요하고 Jupyter UI에서 실행하려면 ipykernel을 설치합니다. 기존 7개 정책의 엔진은 유지합니다.
 
 ### 7주차 비교 실험
 

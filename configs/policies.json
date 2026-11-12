@@ -6,5 +6,9 @@
   "dynamic_ttl": {},
   "duration_aware": {"keep_headroom": 0.3, "breakeven_factor": 2.0},
   "watermark_offload": {"admission_ceiling": 0.9},
-  "pin_all_capped": {"admission_ceiling": 0.9}
+  "pin_all_capped": {"admission_ceiling": 0.9},
+  "prefix_lru_evict": {},
+  "prefix_lru_offload": {},
+  "tlru": {"threshold_ms": 200, "next_prompt_estimate": 160},
+  "hotprefix_admission": {"frequency_threshold": 2, "max_age": 15, "age_every_requests": 100, "gpu_eviction": "lru", "selective": true}
 }

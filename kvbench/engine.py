@@ -128,6 +128,13 @@ EVENT_COLUMNS = ["time_ms", "event", "session_id", "turn_id", "request_id", "det
 
 
 class Simulator:
+    def __new__(cls, rows, system, policy, keep_events=True):
+        # Isolate the block engine so legacy policies retain their exact replay.
+        if cls is Simulator and getattr(policy, "uses_prefix_cache", False):
+            from .prefix_engine import PrefixSimulator
+            return object.__new__(PrefixSimulator)
+        return object.__new__(cls)
+
     def __init__(self, rows, system, policy, keep_events=True):
         self.system = system
         self.policy = policy
