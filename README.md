@@ -2,12 +2,13 @@
 
 도구를 사용하는 LLM Agent의 KV Cache 정책 비교에 사용할 **합성 입력 트레이스**를 생성하고, 같은 트레이스를 **정책만 바꿔 재생**해 TTFT·거절률·GPU KV 점유율을 계산합니다. 세션 도착 시각, 턴별 토큰 수, 도구 대기시간을 W0·W1·W2_BURST·W2_WAIT·W2 조건에 맞춰 JSONL 파일로 저장하고, 시뮬레이터가 그 파일을 읽습니다.
 
-현재 구현 범위는 트레이스 생성·저장·검증과 정책 6종 중 5종의 이산 사건 시뮬레이션입니다. 실제 LLM 추론이나 GPU 실행은 포함하지 않으며, 시스템 파라미터(prefill·decode 속도 등)는 실측 전 자리표시자입니다.
+현재 구현 범위는 트레이스 생성·저장·검증과 기존 7개 정책·block 엔진 4개 정책/기준선의 이산 사건 시뮬레이션입니다. Dynamic TTL은 미구현 stub입니다. 실제 LLM 추론이나 GPU 실행은 포함하지 않으며, 시스템 파라미터(prefill·decode 속도 등)는 실측 전 자리표시자입니다.
 
 현재 연구 질문은 **도구 대기 중인 Agent 세션의 KV를 언제 유지·이동·삭제해야 일반 요청 SLO를 지키면서 재계산·전송 부담을 줄일 수 있는가**입니다. 9주차에는 기존 정책을 유지한 채 60초·stress 0.2/s, 180초·0.2/s, 180초·0.3/s를 설정당 225회씩 분석했습니다. 정책별 차이와 프로젝트의 다음 확인 사항은 [9주차 실험·분석](docs/week9_experiment.md)에 정리했습니다.
 
 | 문서 | 내용 |
 |---|---|
+| [실험 조건·정책 총정리](docs/experiment_overview.md) | 10주차까지와 11주차의 정책·실험 조건·민감도·재분석을 구분한 전체 목록 |
 | [9주차 실험·분석](docs/week9_experiment.md) | 세 설정의 결과 출처, 정책별 차이, 해석 한계와 다음 실험 방향 |
 | [W2 요인 분리](docs/w2_diagnostics.md) | 9조건의 정의, 실행 방법과 진단 로그 |
 | [시뮬레이터](docs/simulator.md) | 정책 동작, 자원 가정, 지표의 집계 구간 |
@@ -92,14 +93,20 @@ python -m kvbench collect results/w2_factorial/runs --output results/w2_factoria
 
 T-LRU의 부분 GPU 보관과 HotPrefix §3.2–3.3의 선택적 CPU 보관을 기존 workload에서 비교합니다. HotPrefix 전체 시스템이나 실제 CUDA 성능의 재현은 아닙니다.
 
-- [결과와 결론](docs/week11_experiment.md) · [구현 명세](docs/week11_policy_implementation.md) · [사전 계획](docs/week11_policy_plan.md)
-- [실행된 분석 노트북](notebooks/week11_policy_review.ipynb) · [공유용 CSV·manifest](docs/data/week11)
+- [11주차 통합 보고서](docs/week11_experiment.md): 정책·조건 → 초기 결과 → 평가 피드백 → 추가 검증 → 결론·후속 작업
+- [초기 정책 비교 노트북](notebooks/week11_policy_review.ipynb) · [피드백에 따른 평가 재검토 노트북](notebooks/week11_evaluation_review.ipynb)
 - 새 정책: `tlru`, `hotprefix_admission`. 같은 block 엔진의 기준선: `prefix_lru_evict`, `prefix_lru_offload`.
+- [초기 CSV·manifest](docs/data/week11) · [추가 CSV·manifest](docs/data/week11_revision)
+
+초기 7,290회는 짧은 실행·기본 환경의 평가입니다. 보완 평가는 비제약 메모리 참조 대비 격차, 조건·도착률별 PCIe/CPU 축, 900초·300초 warm-up, 예시 절대 지연 도착률 격자와 처리량 가정 민감도를 다룹니다. 복귀 지연을 주 지표로 보고 일반 TTFT와 기존 Peak 90% 기반 상대 SLO는 보조로 해석합니다. 실제 GPU 처리량은 아직 실측하지 않았습니다.
 
 ```powershell
 python scripts/run_week11.py --output results/week11_new --workers 4
 python scripts/report_week11.py results/week11_new
+python scripts/run_week11_revision.py --output results/week11_revision_new --workers 4
+python scripts/report_week11_revision.py results/week11_revision_new
 python scripts/build_week11_notebook.py
+python scripts/build_week11_evaluation_notebook.py
 ```
 
 시뮬레이터/실험 실행은 표준 라이브러리만 사용합니다. 그림·노트북 생성에는 pandas, matplotlib, nbformat, IPython이 필요하고 Jupyter UI에서 실행하려면 ipykernel을 설치합니다. 기존 7개 정책의 엔진은 유지합니다.

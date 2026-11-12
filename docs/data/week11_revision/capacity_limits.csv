@@ -1,0 +1,17 @@
+budget_ms,pcie_gbps,variant,max_tested_passing_rate,highest_tested_rate,upper_boundary_censored,lower_boundary_censored,non_monotone,interpretation
+500,0.9,hotprefix_admission,,0.4,False,True,False,maximum passing TESTED point; not continuous capacity
+500,0.9,prefix_lru_evict,,0.4,False,True,False,maximum passing TESTED point; not continuous capacity
+500,0.9,prefix_lru_offload,,0.4,False,True,False,maximum passing TESTED point; not continuous capacity
+500,0.9,tlru,0.1,0.4,False,False,False,maximum passing TESTED point; not continuous capacity
+500,12.0,hotprefix_admission,0.2,0.4,False,False,False,maximum passing TESTED point; not continuous capacity
+500,12.0,prefix_lru_evict,,0.4,False,True,False,maximum passing TESTED point; not continuous capacity
+500,12.0,prefix_lru_offload,0.2,0.4,False,False,False,maximum passing TESTED point; not continuous capacity
+500,12.0,tlru,0.1,0.4,False,False,False,maximum passing TESTED point; not continuous capacity
+1000,0.9,hotprefix_admission,0.1,0.4,False,False,False,maximum passing TESTED point; not continuous capacity
+1000,0.9,prefix_lru_evict,0.2,0.4,False,False,False,maximum passing TESTED point; not continuous capacity
+1000,0.9,prefix_lru_offload,0.1,0.4,False,False,False,maximum passing TESTED point; not continuous capacity
+1000,0.9,tlru,0.2,0.4,False,False,False,maximum passing TESTED point; not continuous capacity
+1000,12.0,hotprefix_admission,0.3,0.4,False,False,False,maximum passing TESTED point; not continuous capacity
+1000,12.0,prefix_lru_evict,0.2,0.4,False,False,False,maximum passing TESTED point; not continuous capacity
+1000,12.0,prefix_lru_offload,0.3,0.4,False,False,False,maximum passing TESTED point; not continuous capacity
+1000,12.0,tlru,0.2,0.4,False,False,False,maximum passing TESTED point; not continuous capacity

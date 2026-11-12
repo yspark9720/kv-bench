@@ -165,26 +165,58 @@ def plot(rows, directory):
                ('resume_p95_ms', 'Resume P95 latency (ms)', 1),
                ('transfer_bytes', 'Transfer (GiB/run)', 2**30),
                ('recomputed_tokens', 'Recomputed tokens/run', 1)]
-    fig, axes = plt.subplots(2, 2, figsize=(13, 8))
     envs = ('default', 'slow_pcie', 'small_cpu', 'slow_small')
-    for ax, (metric, title, scale) in zip(axes.flat, metrics):
-        for i, variant in enumerate(variants):
-            values = [mean(r[metric] / scale for r in rows if r['setting']=='180s_02' and r['seed'] < 5
-                           and r['environment']==env and r['variant']==variant
-                           and (r['suite']=='main' if env=='default' else r['suite']=='hardware')) for env in envs]
-            ax.bar([j + (i-1.5)*.2 for j in range(4)], values, width=.2, label=LABELS[variant])
-        ax.set_xticks(range(4), ['12GB/s\n64GiB', '1.5GB/s\n64GiB', '12GB/s\n1GiB', '1.5GB/s\n1GiB'])
-        ax.set_title(title)
-        ax.grid(axis='y', alpha=.2)
-    handles, labels = axes[0,0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc='lower center', ncol=4, frameon=False, fontsize=10)
-    fig.suptitle('Week 11: unchanged workloads, 180s / stress 0.2\nMean of run-level metrics across nine conditions; the SAME five seeds in every environment')
-    fig.tight_layout(rect=(0, .055, 1, .94))
-    fig.savefig(directory/'week11_policy_comparison.png', dpi=160)
-    fig.savefig(directory/'week11_policy_comparison.svg')
-    plt.close(fig)
-    svg = directory/'week11_policy_comparison.svg'
-    svg.write_text('\n'.join(line.rstrip() for line in svg.read_text(encoding='utf-8').splitlines()) + '\n', encoding='utf-8')
+    settings = ('60s_02', '180s_02', '180s_03')
+    grouped = defaultdict(list)
+    for row in rows:
+        if (row['variant'] in variants and row['seed'] < 5
+                and row['suite'] == ('main' if row['environment'] == 'default' else 'hardware')):
+            grouped[row['setting'], row['environment'], row['variant']].append(row)
+    means = {}
+    for setting in settings:
+        for env in envs:
+            for variant in variants:
+                values = grouped[setting, env, variant]
+                # Every environment must contain the same nine conditions and
+                # five seeds; missing runs must not silently bias a figure.
+                keys = {(r['condition'], r['seed']) for r in values}
+                if (len(values) != 45 or len(keys) != 45
+                        or {r['seed'] for r in values} != set(range(5))
+                        or len({r['condition'] for r in values}) != 9):
+                    raise AssertionError(f'incomplete plot cohort: {setting}, {env}, {variant}')
+                for metric, _, scale in metrics:
+                    means[setting, env, variant, metric] = mean(r[metric] / scale for r in values)
+    groups = (
+        ('week11_policy_comparison_60s_02', '60s / stress 0.2', ('60s_02',)),
+        ('week11_policy_comparison', '180s / stress 0.2', ('180s_02',)),
+        ('week11_policy_comparison_180s_03', '180s / stress 0.3', ('180s_03',)),
+        ('week11_policy_comparison_average', 'Equal-weight mean of the three settings', settings),
+    )
+    paths = []
+    for stem, heading, included in groups:
+        fig, axes = plt.subplots(2, 2, figsize=(13, 8))
+        for ax, (metric, title, _) in zip(axes.flat, metrics):
+            for i, variant in enumerate(variants):
+                values = [mean(means[setting, env, variant, metric] for setting in included) for env in envs]
+                ax.bar([j + (i-1.5)*.2 for j in range(4)], values, width=.2, label=LABELS[variant])
+            ax.set_xticks(range(4), ['12GB/s\n64GiB', '1.5GB/s\n64GiB', '12GB/s\n1GiB', '1.5GB/s\n1GiB'])
+            ax.set_title(title)
+            ax.set_ylim(bottom=0)
+            ax.grid(axis='y', alpha=.2)
+        handles, labels = axes[0,0].get_legend_handles_labels()
+        fig.legend(handles, labels, loc='lower center', ncol=4, frameon=False, fontsize=10)
+        fig.suptitle(f'Week 11: {heading}\nMean of run-level metrics across nine conditions; the SAME five seeds in every environment')
+        if len(included) > 1:
+            fig.text(.5, .055, 'Average of run-level P95s, not pooled P95; costs are per run, not per second.',
+                     ha='center', fontsize=9)
+        fig.tight_layout(rect=(0, .085 if len(included) > 1 else .055, 1, .94))
+        png, svg = directory/f'{stem}.png', directory/f'{stem}.svg'
+        fig.savefig(png, dpi=160)
+        fig.savefig(svg)
+        plt.close(fig)
+        svg.write_text('\n'.join(line.rstrip() for line in svg.read_text(encoding='utf-8').splitlines()) + '\n', encoding='utf-8')
+        paths.append(png)
+    return paths
 
 
 def report(output, publish=True):

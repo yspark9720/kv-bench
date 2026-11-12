@@ -1,0 +1,20 @@
+{
+  "tests": 59,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "successful": true,
+  "elapsed_seconds": 19.860000000000582,
+  "log_sha256": "70dfe140a2902ba96b35eec03478c2ffe5245e32aa37d76ecb6a59ccc0011190",
+  "test_source_sha256": {
+    "tests/test_experiment.py": "b3ad9ac78e266d3327272627f52fb0705acc0193dc29c251b0115f9c345559de",
+    "tests/test_prefix_policies.py": "a6e7871ab5e5e3cf265f0a32f2b645ddba3790fd36a44f81a82aa723356fb012",
+    "tests/test_simulator.py": "fb98d5f71848743519bfaf5bf2620cfcffbb79f026ade77d157c5c538c68207e",
+    "tests/test_watermark_ceiling.py": "474363ecfee74068e88b94d89ab8b3dfbe3055e283067bc1eb0f420cf8f1a663",
+    "tests/test_week11.py": "dcf2f8386135ed9746b7299a300f93a7ed89a9b0a271e68d72dd5c14eed253db",
+    "tests/test_week11_revision.py": "30b67f09fb9f989f1af6edf6bb92f9df4786752ae46f9a519341bda72a9f5f60",
+    "tests/test_workload.py": "496621dcd2b8fec236a75ea7f1e9ff9bae7e1b7ed914b14fdabfc86aca60cd2a"
+  },
+  "command": "python -m unittest discover -s tests -v",
+  "existing_simulator_sources_unchanged": true
+}

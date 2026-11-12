@@ -1,0 +1,18 @@
+{
+  "purpose": "Preserve evaluated inputs before notebook separation and documentation consolidation; experiment.json and result CSVs are unchanged.",
+  "experiment_manifest_sha256": "97396d39740d21fa38f1403b3eefd3959647322d63ec9ca4ac7c17045c16c49a",
+  "files": {
+    "docs/week11_revision_plan.md": {
+      "snapshot": "week11_revision_plan.txt",
+      "sha256": "7808b7875484090080ac2032a9c340eed812f0daae716342c49cb351f1e5a969"
+    },
+    "scripts/run_week11_revision.py": {
+      "snapshot": "run_week11_revision.py.txt",
+      "sha256": "98c20439435ff2bcd43d70313a9926d5c861f1e6f266c969c228d69c534970cb"
+    },
+    "docs/week11_policy_plan.md": {
+      "snapshot": "week11_policy_plan.txt",
+      "sha256": "a936682140d5fbc37dc148685d5c3f277fe39e8a9cb2d50d0487f370630ecf94"
+    }
+  }
+}

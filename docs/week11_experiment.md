@@ -1,130 +1,200 @@
-# 11주차: 부분 GPU 보관과 선택적 CPU 보관의 평가
+# 11주차: 정책 구현부터 평가 재검토까지
 
-평가일: 2026-11-12. [사전 계획](week11_policy_plan.md) · [구현 명세](week11_policy_implementation.md) · [실행된 노트북](../notebooks/week11_policy_review.ipynb) · [CSV·manifest·검증 자료](data/week11).
+2026-11-12 기준. 정책 설명·계획·초기 결과·보완 평가·후속 검증을 이 문서로 통합했다. 읽는 순서는 **비교 목적 → 정책과 조건 → 초기 관측 → 평가 피드백 → 추가 검증 → 조건별 판단과 다음 작업**이다.
 
-## 결과 요약
+| 읽을 파일 | 역할 |
+|---|---|
+| [정책 비교 노트북](../notebooks/week11_policy_review.ipynb) | 초기 7,290회의 정책 비교·환경 민감도·파라미터 비교 |
+| [평가 재검토 노트북](../notebooks/week11_evaluation_review.ipynb) | 피드백에 따른 기존 결과 재분석과 추가 1,305회 평가 |
+| [전체 실험 목록](experiment_overview.md) | 10주차까지와 11주차의 조건·정책을 한 번에 확인 |
 
-**T-LRU는 GPU에서 삭제·재계산하는 같은 block LRU보다 실제 지연을 줄였다.** 180초·stress 0.2의 9조건·15seed 평균에서 normal P95는 385.2→342.6ms, 복귀 P95는 547.3→450.2ms로 감소했다. 다만 빠른 PCIe·넉넉한 CPU 환경의 offload 기준선보다 빠르다는 결과는 아니다.
+## 1. 무엇을 확인하려는가?
 
-**HotPrefix 선택적 CPU 보관은 전송량을 줄였지만 기본 환경의 지연을 악화시켰다.** 같은 설정에서 block LRU offload 대비 전송량은 15.06→11.98GiB/run으로 약 20.5% 줄었지만 normal P95는 270.5→292.5ms, 복귀 P95는 184.1→280.2ms로 증가했다. 느린 PCIe에서는 이 trade-off의 방향이 달라지는 조건이 있었다.
+도구를 기다리는 Agent의 KV를 **GPU에 얼마나 남길지**, GPU에서 회수한 KV를 **CPU에 보관할지 삭제할지**를 비교한다. 주어진 환경과 부하에서 복귀 지연·전송·재계산 비용의 유불리를 확인하는 것이 목적이다.
 
-따라서 '두 새 정책이 기존 정책보다 우수하다'고 결론 내리지 않는다. **부분 보관의 회수 판단과 CPU 보관 여부의 판단을 분리해야 하며, copy 절약이 서비스 지연 개선을 뜻하지 않는다.**
+초기 비교는 T-LRU와 HotPrefix의 정책 일부를 기존 워크로드에 적용하는 단계였다. 이후 평가 점검을 반영해 “새 정책이 좋은가?”에서 **“어떤 조건에서 어떤 보관 방식이 유리하며, 그 판단을 어떤 지표로 검증할 것인가?”**로 질문을 구체화했다.
 
-이 결과는 KV-Bench의 예약·FIFO·고정 처리량 모델에 대한 것이다. HotPrefix는 §3.2–3.3의 정책 실험이며 선제 승격·CUDA pipeline·cross-session 공유를 포함한 전체 시스템 재현이 아니다.
+모든 결과는 고정 처리량·FIFO를 사용하는 시뮬레이션이다. 실제 GPU 처리량·생성 품질 또는 원 논문 전체 시스템의 성능 재현으로 해석하지 않는다.
 
-## 실험 범위와 통제
+## 2. 비교 정책과 구현 범위
 
-| 구분 | 설정 | 실행 수 |
+| 같은 block 엔진의 정책 | GPU 공간이 부족할 때 | CPU와 복귀 처리 |
+|---|---|---|
+| **Block LRU evict** | 오래 idle인 세션의 suffix부터 필요한 block만 삭제 | CPU를 사용하지 않고 누락 토큰 재계산 |
+| **T-LRU** | 예상 prefill 예산에 맞는 suffix 우선 회수, 부족하면 block LRU | 남은 prefix 재사용 + 누락 토큰 재계산 |
+| **Block LRU offload** | 같은 GPU block LRU 순서로 회수 | CPU 보관 시도; 부족하면 회수 가능한 CPU LRU block 교체 |
+| **HotPrefix admission** | 기본 GPU 순서는 같은 block LRU | 빈도·hotness로 CPU 보관/교체 여부를 선별; 거절한 KV는 삭제 |
+
+핵심 짝비교는 **T-LRU ↔ Block LRU evict**, **HotPrefix admission ↔ Block LRU offload**다. 여기서 CPU admission 거절은 KV를 CPU에 넣지 않는 결정이며 사용자 요청 거절과 다르다.
+
+기존 **Pin-All, Evict/Recompute, Fixed TTL, LRU offload, Duration-Aware, Watermark offload, Capped Pin-All**도 초기 주 평가에 포함했다. 기존 정책은 세션 전체 회수 엔진을 유지한다. 기존 엔진과 새 엔진에는 회수 단위·진행 중 전송의 부족량 계산·CPU 포화 시 교체 방식 차이가 있어, 엔진 간 차이를 새 정책 하나의 효과로 합치지 않는다. Duration-Aware는 실제 도구 대기시간을 쓰는 oracle 참조다.
+
+### 기본값과 중요한 구현 규칙
+
+- **T-LRU:** 자기 prefill 예산 200ms, 다음 prompt 추정 160 tokens. 실제 미래 prompt를 읽지 않는다. 계산식은 아래와 같으며 block 경계에서 보관량을 올림한다.
+
+  ~~~text
+  xi = floor(budget_ms × prefill_tokens_per_s / 1000)
+  keep_blocks = ceil(max(history_tokens + estimated_prompt - xi, 0) / block_size)
+  ~~~
+
+  해당 경계 뒤의 GPU suffix를 먼저 회수한다. 예산은 입장·전송·대기열을 포함한 전체 TTFT 보장이 아니다.
+- **HotPrefix:** 기본 빈도 F=2. block을 한 턴에서 한 번 접근한 것으로 기록한다. 최근성 clock은 사용 시 15로 reset, 100 prefill 완료마다 1 감소한다. 15는 논문 예시, 100회는 사전에 정한 재현 설정이다. CPU 후보는 빈도 기준과 resident 최소 frequency×clock 비교를 통과해야 하며 공간이 있어도 거절될 수 있다. GPU hotness 순서는 별도 변형이다.
+- **공통:** 입장 때 턴의 context+output 공간을 예약하고, TOOL_WAIT의 KV만 회수한다. 실행·입장 완료 요청·전송 중 자원은 보호한다. offload 완료 시 GPU를 반환하고, 새 block 엔진은 이미 전송 중인 반환 예정 block을 부족량에서 제외한다.
+- **복귀:** GPU·CPU·삭제 상태가 섞여도 남은 KV를 재사용하고 없는 토큰만 재계산한다. copy 중 도구가 끝났을 때 요청 등록 전에 발생한 잔여 offload 대기도 복귀 지연에 포함한다.
+
+코드: [정책](../kvbench/policies/prefix.py), [block 엔진](../kvbench/prefix_engine.py), [복귀 지표](../kvbench/week11.py). 근거: [T-LRU Algorithm 1](https://arxiv.org/html/2510.15152v1#S4), [HotPrefix 저자 PDF](https://cs.nju.edu.cn/tianchen/lunwen/2026/sigmod26-liyuhang.pdf). HotPrefix의 선제 promotion·CUDA pipeline·cuckoo filter 성능·세션 간 prefix 공유는 구현 범위 밖이다.
+
+## 3. 실험 조건과 평가 방법
+
+기본은 GPU KV 4GiB·CPU KV 64GiB·PCIe 12GB/s·prefill 8,000 tokens/s·세션당 decode 30 tokens/s다. normal 도착률 2/s, warm-up 10초, 입장 대기 제한 30초다. stress는 3–5턴이며 중간 도구 호출 뒤 반드시 복귀한다.
+
+반복 사용한 세 설정은 **60초·0.2/s, 180초·0.2/s, 180초·0.3/s**다. 9조건은 W0와 base/burst/wait/both 각각 2x/4x다. 2x/4x는 도구 대기 배율이다. 모든 설정을 모든 확장 축과 교차한 실험은 아니다.
+
+| 단계 | 조건 | 실행 |
 |---|---|---:|
-| 주 평가 | 기존 3설정 × 기존 9조건 × seed 0–14 × 11정책/기준선 | 4,455 |
-| 환경 민감도 | 3설정 × 9조건 × seed 0–4 × 추가 3환경 × 5정책 | 2,025 |
-| 정책 ablation | 3설정 × 9조건 × seed 0–4 × 6변형 | 810 |
-| 합계 | | **7,290** |
+| 초기 주 평가 | 세 설정 × 9조건 × 15seed × 기존 7개+block 4개 | 4,455 |
+| 초기 환경 민감도 | 세 설정 × 9조건 × 5seed; PCIe 1.5GB/s·CPU 64GiB, 12GB/s·1GiB, 1.5GB/s·1GiB; block 4개+기존 LRU 참고값 | 2,025 |
+| 초기 파라미터 비교 | 세 설정 × 9조건 × 5seed; T-LRU 100/400ms, HotPrefix F=1/3·GPU hotness·CPU selective OFF | 810 |
+| 비제약 참조 | 기존 세 설정 × 9조건 × 15seed; GPU 64GiB·Pin-All | 405 |
+| 환경 축 확장 | 180초·0.2/0.3/s, base_4x·both_4x, 5seed. PCIe 12/3/1.5/0.9/0.6/0.3GB/s 또는 CPU 64/8/4/2/1/0.5GiB를 각각 변경 | 480 |
+| 긴 실행과 도착률 격자 | 900초·warm-up 300초, base_4x·both_4x의 0.2/0.3/s; both_4x에 0.1/0.4 추가. 5seed, PCIe 12/1.5/0.9GB/s·CPU 64GiB | 270 |
+| prefill 가정 민감도 | 180초·0.2/s, base_4x·both_4x, 5seed. 8,000/4,000/2,000 tokens/s | 150 |
 
-설정은 60s/0.2, 180s/0.2, 180s/0.3이며 기존 JSON을 바꾸지 않았다. 조건은 W0 1x 및 W1·W2_BURST·W2_WAIT·W2 각각 2x/4x다. 2x/4x는 기존 생성기의 도구 대기 배율이며 도착률 배율이 아니다. 지원 가능한 모든 1x/8x 조합을 추가한 실험은 아니다.
+초기 합계 **7,290회**, 추가 합계 **1,305회**다. CPU를 쓰지 않는 정책은 같은 입력에서 한 번 실행해 환경 행에 재사용하므로 추가 분석 표는 1,825행이다. 재사용 행을 독립 실행으로 세지 않는다.
 
-주 평가는 기존 7정책과 `prefix_lru_evict`, `prefix_lru_offload`, `tlru`, `hotprefix_admission`을 포함한다. 서로 다른 source trace는 405개이며 같은 설정·조건·seed는 정책과 PCIe/CPU 환경이 달라도 같은 입력을 사용한다. 생성기나 도구 종류를 추가하지 않았다.
+### 지표를 읽는 기준
 
-- **T-LRU ↔ block LRU evict:** 같은 block 회수·GPU-only 재계산 모델에서 판단을 비교한다.
-- **HotPrefix admission ↔ block LRU offload:** 같은 GPU LRU 순서에서 CPU 보관 여부·교체를 비교한다.
-- 기존 whole-session LRU와 새 block LRU의 차이는 회수 단위·in-flight 처리·CPU 교체의 차이도 포함하므로 새 정책 효과로 합치지 않는다.
-- 새 정책 입장 상한은 100%. GPU 90% SLO 통과 수를 우수성 근거로 쓰지 않는다.
-- 기본값은 사전 고정: T-LRU 200ms/Q_hat 160tokens, HotPrefix F=2/max_age=15/100-request aging. 좋은 결과를 보고 기본값을 바꾸지 않았다.
+- **복귀 지연:** 실제 도구 종료→다음 첫 토큰. 초기 지표는 warm-up 이후 최초 도착한 세션 cohort, 장기 window 지표는 도구 종료가 [300,900)초인 복귀 요청이다. 두 분모를 구분한다.
+- **비제약 참조 격차:** 같은 계산/FIFO에서 GPU KV 풀만 충분히 늘린 Pin-All과 비교한다. 이론적 최저 지연을 보장하는 하한은 아니다.
+- **완료율·거절률:** P95는 완료 요청만의 값이므로 함께 읽는다. 계획된 후속 턴과 완료 턴 수도 보존한다.
+- **비용·사용률:** 전송 bytes·재계산 tokens를 보고한다. 추가 사용률은 서비스 예약 구간을 측정 창에 잘라 계산한다. 비용 누계·세션 cohort 귀속 비용·drain 포함 지표를 섞지 않는다.
+- 평균은 run별 P95의 평균이며 pooled P95가 아니다. 짝차이 CI는 seed 단위 bootstrap 2,000회다. 5seed와 다중 비교의 불확실성이 남는다.
 
-모든 평균은 **run별 P95·비용을 조건·seed에 걸쳐 평균낸 값**이다. 전체 요청을 합친 P95가 아니다. paired CSV의 ALL9 CI는 같은 seed 안에서 먼저 9조건을 평균내고 seed 단위 bootstrap 2,000회로 계산했다. 환경 간 비교는 기본 환경도 seed 0–4로 맞췄다.
+## 4. 초기 평가에서 관측한 것
 
-## 기본 환경: T-LRU
+아래는 기본 환경·9조건×15seed의 복귀 P95 평균이다. 단위 ms.
 
-단위 ms, 재계산은 tokens/run. 각 행은 9조건×15seed 평균이다.
+| 설정 | Block evict → T-LRU | Block offload → HotPrefix |
+|---|---:|---:|
+| 60초·0.2/s | 272.5 → 209.3 | 125.9 → 170.7 |
+| 180초·0.2/s | 547.3 → 450.2 | 184.1 → 280.2 |
+| 180초·0.3/s | 974.3 → 895.3 | 311.4 → 470.9 |
 
-| 설정 | block LRU normal P95 | T-LRU normal P95 | block LRU 복귀 P95 | T-LRU 복귀 P95 | 재계산 LRU→T-LRU |
-|---|---:|---:|---:|---:|---:|
-| 60s/0.2 | 329.5 | 314.8 | 272.5 | 209.3 | 10,252→9,005 |
-| 180s/0.2 | 385.2 | 342.6 | 547.3 | 450.2 | 72,957→67,267 |
-| 180s/0.3 | 759.5 | 715.2 | 974.3 | 895.3 | 199,807→192,222 |
+180초·0.2/s에서 T-LRU는 같은 block evict 대비 복귀 지연 17.7%·재계산량 7.8%를 줄였다. HotPrefix는 같은 block offload 대비 전송량 20.5%를 줄였지만 복귀 지연은 52.2% 늘었다. 두 새 기본 정책은 초기 주 평가·초기 hardware 평가에서 stress 완료율 100%, normal 거절률 0%였다.
 
-180s/0.2에서 normal P95는 약 11.1%, 복귀 P95는 약 17.7%, 재계산량은 약 7.8% 감소했다. CPU 전송은 두 정책 모두 0이다. **같은 회수량에서도 어떤 요청의 prefix를 남기는지가 실제 지연과 전체 재계산량에 영향을 줄 수 있다.**
+이 관측만으로 빠른 offload보다 GPU-only가 낫다거나 선택적 CPU 보관이 항상 유리하다고 할 수 없다. 초기 180초·0.2/s의 5seed 파라미터 비교에서도 HotPrefix F=1/2/3은 전송 13.59/10.74/2.91GiB, 복귀 182.6/272.2/460.8ms였다. 기본 T-LRU 200ms의 좋은 평균을 전역 최적값으로 선정한 실험도 아니다.
 
-하지만 모든 조건의 효과가 같은 것은 아니다. 180s/0.2의 both_4x에서 복귀 P95는 평균 632.3→617.7ms였지만, paired 차이의 95% CI는 [-52.2, +19.5]ms로 0을 포함해 해당 조건만의 개선은 분명하지 않았다. 각 run에서 선택된 실제 P95 요청의 평균 구성은 다음과 같다.
+## 5. 평가 피드백으로 바꾼 질문
 
-| 정책 | 입장 | 복원 | prefill 대기 | 자기 prefill | 복귀 P95 |
-|---|---:|---:|---:|---:|---:|
-| block LRU evict | 0.0 | 0.0 | 130.1 | 502.2 | 632.3 |
-| T-LRU | 0.0 | 0.0 | 222.1 | 395.6 | 617.7 |
+[검토 당시 피드백 원문](week11_feedback.md)을 보존했다. 아래는 해당 문제 제기에 대해 이번 평가에서 반영한 내용과 남은 검증을 구분한 것이다.
 
-성분은 한 행 안에서 같은 P95 요청의 값이며 정책 사이에는 선택된 요청이 다를 수 있다. 자기 prefill이 작아져도 FIFO 대기가 커지면 전체 복귀 지연 개선이 제한되는 모습이다. **재계산 토큰 수 감소를 곧바로 같은 비율의 응답 지연 감소로 해석할 수 없다.**
+| 점검 내용 | 반영한 것 | 남은 경계 |
+|---|---|---|
+| 기본 offload가 이미 좋은 환경인가? | 비제약 참조 대비 격차 | 다른 계산 모델·실측 환경까지의 하한은 아님 |
+| 평균이 정책 역전을 가리는가? | 조건·부하별 PCIe/CPU 곡선과 짝차이 | 모든 9조건을 확장 격자에서 재실행한 것은 아님 |
+| normal TTFT·Peak가 정책을 구분하는가? | 복귀·참조 격차 중심, 기존 SLO 재분석 | 실제 서비스의 절대 SLO 확정 필요 |
+| 짧은 실행의 초기 상태 영향인가? | 900초·300초 warm-up, 전반/후반 비교 | 정상 상태 완전 입증은 아님 |
+| 정책의 판단이 실제 작동했는가? | 빈도/hotness 거절·CPU 교체·구간 사용률 | 미복귀·공유 prefix 미도입 |
+| 상수·엔진이 현실을 반영하는가? | 처리량 가정 민감도 | 하드웨어 실측·실제 엔진 검증 미수행 |
 
-## 기본 환경: HotPrefix 선택적 CPU 보관
+기존 7정책도 비제약 격차·SLO 실패 재분석에 포함했다. 확장 환경·장기·prefill 추가 실행의 중심은 block 4개와 비제약 Pin-All 참조다. 기존 Watermark·Duration-Aware까지 확장 격자에서 재평가했다고 주장하지 않는다.
 
-단위 ms, 전송은 GiB/run. 같은 GPU block LRU 순서의 비교다.
+## 6. 추가 평가에서 확인한 결과
 
-| 설정 | LRU normal P95 | HotPrefix normal P95 | LRU 복귀 P95 | HotPrefix 복귀 P95 | 전송 LRU→HotPrefix | 추가 재계산 |
-|---|---:|---:|---:|---:|---:|---:|
-| 60s/0.2 | 308.0 | 314.1 | 125.9 | 170.7 | 2.16→1.62 | 2,617 |
-| 180s/0.2 | 270.5 | 292.5 | 184.1 | 280.2 | 15.06→11.98 | 15,029 |
-| 180s/0.3 | 448.5 | 497.2 | 311.4 | 470.9 | 40.43→30.88 | 46,863 |
+### 6.1 기본 offload에 남은 개선 여유
 
-전송량은 줄었지만 기본 PCIe 12GB/s에서는 재계산이 추가되면서 지연이 악화됐다. 두 기본 새 정책은 주 평가·하드웨어 평가에서 stress 완료율 100%, normal 거절률 0%였으므로 이 차이를 더 많은 거절로 완료 요청만 선별한 효과로 설명할 수는 없다.
+| 기존 설정 | 비제약 참조 복귀 P95 | Block offload 복귀 P95 | 격차 |
+|---|---:|---:|---:|
+| 60초·0.2/s | 113.4 | 125.9 | 12.4 |
+| 180초·0.2/s | 166.2 | 184.1 | 17.9 |
+| 180초·0.3/s | 279.6 | 311.4 | 31.7 |
 
-**해석:** 현재 stress 세션은 3–5턴이고 중간 도구 호출 뒤 반드시 복귀한다. 첫 접근이라 frequency가 낮아도 다음 요청에서 긴 prefix를 다시 사용한다. 그러므로 과거 접근 횟수가 낮다는 이유로 CPU 보관을 거절하면 실제로 다시 필요한 KV를 버릴 수 있다. 이는 현재 워크로드와 정책의 적합성에 대한 관측이며 HotPrefix 논문의 공유 prefix 서빙 전체가 나쁘다는 결론이 아니다.
+기본 환경은 단순 offload에 남은 개선 여유가 작았다. 기존 평가의 실패 중 Peak를 포함한 비율은 88.3%, Peak만 실패한 비율은 73.8%였다. 기존 LRU의 180초·0.2/s normal P95 270.1ms 중 prefill 대기는 229.6ms였다. 이런 이유로 normal TTFT·기존 상대 SLO를 단독 주 지표로 해석하지 않는다.
 
-## PCIe·CPU 민감도
+### 6.2 전송 환경·부하에 따라 유리한 정책이 바뀐다
 
-180s/0.2, 같은 seed 0–4, 9조건 평균. 단위 ms/GiB.
+예시로 **900초·warm-up 300초, base_4x·0.3/s, CPU 64GiB**의 복귀 window P95를 비교한다. 단위 ms, 5seed 평균이다.
 
-| PCIe·CPU | LRU normal | HotPrefix normal | LRU 복귀 | HotPrefix 복귀 | 전송 LRU→HotPrefix |
-|---|---:|---:|---:|---:|---:|
-| 12GB/s·64GiB | 275.0 | 289.7 | 182.6 | 272.2 | 13.59→10.74 |
-| 1.5GB/s·64GiB | 366.9 | 357.8 | 517.8 | 498.4 | 14.02→10.90 |
-| 12GB/s·1GiB | 322.7 | 322.9 | 394.6 | 403.8 | 10.39→7.93 |
-| 1.5GB/s·1GiB | 391.2 | 369.0 | 573.1 | 536.9 | 10.60→7.98 |
-
-느린 PCIe에서는 전송 절약이 지연 감소로 연결된 평균 결과가 있었다. 1.5GB/s·64GiB의 복귀 차이는 -19.4ms [95% CI -29.1, -7.8]였지만 normal 차이 CI는 [-25.5, +2.0]ms로 0을 포함했다. 느린 PCIe·1GiB에서는 normal -22.1ms [-37.4, -8.8], 복귀 -36.2ms [-50.1, -21.9]였다. CPU 풀만 줄인 경우에는 두 지연의 CI가 모두 0을 포함했다. 'CPU가 작으면 선택적 보관이 항상 유리하다'고 일반화하지 않는다. 환경별 seed가 5개라는 한계도 있다. [동일 5seed paired 결과](data/week11/paired_hardware.csv).
-
-CPU를 쓰지 않는 T-LRU와 block LRU evict는 같은 seed에서 PCIe/CPU 설정을 바꿔도 요청 기록이 정확히 같아야 한다. 이 음성 대조도 검증했다. 선택적 보관의 이점이 나타나도 그것만으로 GPU-only 전략보다 우수하다는 결론은 내리지 않는다.
-
-![같은 5seed의 환경별 비교](figures/week11_policy_comparison.png)
-
-## 정책 ablation
-
-180s/0.2, 9조건×5seed. 같은 seed의 기본 T-LRU는 normal 328.4ms/복귀 432.2ms, 기본 HotPrefix는 289.7ms/272.2ms다.
-
-| 변형 | normal P95 | 복귀 P95 | 전송 GiB | 재계산 tokens |
+| PCIe | Block evict | T-LRU | Block offload | HotPrefix |
 |---|---:|---:|---:|---:|
-| T-LRU 100ms | 353.4 | 466.5 | 0 | 61,467 |
-| T-LRU 200ms 기본 | 328.4 | 432.2 | 0 | 60,712 |
-| T-LRU 400ms | 351.0 | 451.0 | 0 | 62,952 |
-| HotPrefix F=1 | 275.0 | 182.6 | 13.59 | 4 |
-| HotPrefix F=2 기본 | 289.7 | 272.2 | 10.74 | 14,261 |
-| HotPrefix F=3 | 348.6 | 460.8 | 2.91 | 51,803 |
-| HotPrefix + GPU hotness 순서 | 295.9 | 326.4 | 7.95 | 20,061 |
-| CPU selective off | 275.0 | 182.6 | 13.59 | 0 |
+| 12GB/s | 1,532.9 | 1,406.0 | **277.9** | 626.0 |
+| 1.5GB/s | 1,532.9 | 1,406.0 | 1,396.2 | **1,076.0** |
+| 0.9GB/s | 1,532.9 | **1,406.0** | 5,734.4 | 2,305.7 |
 
-CPU selective off는 같은 엔진의 block LRU offload와 replay가 같아야 하는 대조군이다. F=1은 여기서 거의 항상 보관하는 쪽에 가까웠고, F=3은 전송을 더 줄이지만 지연을 크게 악화시켰다. GPU hotness 순서를 추가해도 기본 admission-only보다 좋아지지 않았다. **현재 입력에서 frequency가 높다는 것이 빠른 복귀 또는 큰 지연 절약을 뜻하지는 않는다.**
+이 사례는 모든 seed에서 stress 완료율 100%·normal 거절률 0%였다. 1.5GB/s의 HotPrefix−T-LRU 차이는 −330.0ms [95% CI −489.7, −176.4]로 5seed 모두 HotPrefix가 낮았다. 다른 조건에서도 같은 순위라고 일반화하지 않는다.
 
-T-LRU 200ms가 이 표에서 좋게 보이더라도 전역 최적값이라고 주장하지 않는다. 사전 기본값과 민감도를 보고한 것이며 학습/검증 seed를 나눈 최적화 실험이 아니다.
+PCIe/CPU별 전체 곡선은 평가 재검토 노트북에 있다. 교차점은 평균 짝차이 부호가 바뀐 **인접 시험 구간**으로 보고하며 정확한 경계값을 보간하지 않는다. 극단적인 0.3GB/s의 일부 block offload 실행에서는 요청 거절이 발생했고, 해당 점은 그래프에 ×로 표시한다.
 
-## 검증과 재현 자료
+### 6.3 T-LRU의 장기 효과도 조건별로 봐야 한다
 
-주 평가 ALL9의 paired 차이(후보−기준선)와 seed 단위 bootstrap 95% CI는 다음과 같다. 단위 ms. 조건별 단일 CI와 구분하며 복수 지표에 대한 동시 신뢰구간은 아니다.
+900초·warm-up 300초, 같은 block evict 대비 T-LRU의 복귀 window P95 차이다. 음수가 개선이며 단위 ms다.
 
-| 설정 | T-LRU normal Δ [CI] | T-LRU 복귀 Δ [CI] | HotPrefix normal Δ [CI] | HotPrefix 복귀 Δ [CI] |
+| 조건 | 도착률 | 평균 차이 | 95% CI |
+|---|---:|---:|---|
+| base_4x | 0.2/s | −109.8 | [−196.8, +44.0] |
+| base_4x | 0.3/s | −126.9 | [−187.3, −46.9] |
+| both_4x | 0.2/s | −36.3 | [−51.7, −21.7] |
+| both_4x | 0.3/s | −86.9 | [−191.1, −25.4] |
+
+초기 9조건 평균의 17.7%를 장기 조건의 공통 개선율로 쓰지 않는다. 최초 도착 cohort와 도구 종료 window 지표를 모두 보존했다. [300,600)·[600,900) 차이도 보고하며, 900초 도착 종료 직전에는 drain 경계 영향이 남을 수 있다.
+
+### 6.4 큰 CPU에서는 HotPrefix의 빈도 필터가 지배했다
+
+확장 평가의 기본 환경에서 두 조건·두 도착률×5seed를 합치면 CPU admission 221,854건 중 거절은 56,108건이고 전부 frequency 사유였다. hotness 거절·CPU 교체는 0건, 빈도 거절의 약 76.8%는 첫 도구 대기에서 나왔다. 이는 해당 20개 replay의 진단이며 기존 9조건 전체의 수치가 아니다.
+
+현재 입력은 중간 도구 호출 뒤 반드시 돌아온다. 첫 접근이라 빈도가 낮은 KV도 곧 필요할 수 있으므로, 과거 빈도와 미래 가치가 잘 맞는 환경인지 별도 확인해야 한다. CPU가 작을 때의 선별·교체 동작은 추가 표로 구분한다.
+
+### 6.5 도착률·처리량은 아직 모형 안의 조건부 평가다
+
+both_4x의 900초 실행에서 도착률 0.1/0.2/0.3/0.4를 시험했다. 예시 기준은 normal·복귀 P95 각각 500ms 또는 1,000ms 이하, stress 완료율 ≥99%, normal 거절률 ≤1%다.
+
+1,000ms 기준에서 **5seed 모두 통과한 최대 시험 도착률**은 다음과 같다.
+
+| PCIe | Block evict | T-LRU | Block offload | HotPrefix |
 |---|---:|---:|---:|---:|
-| 60s/0.2 | -14.7 [-26.2,-5.7] | -63.2 [-99.0,-29.8] | +6.2 [+0.2,+15.7] | +44.8 [+18.4,+75.2] |
-| 180s/0.2 | -42.6 [-53.2,-32.9] | -97.1 [-123.2,-76.2] | +22.0 [+14.7,+30.2] | +96.1 [+70.7,+120.3] |
-| 180s/0.3 | -44.3 [-56.6,-34.1] | -79.0 [-103.3,-53.8] | +48.7 [+38.3,+60.3] | +159.6 [+134.7,+183.0] |
+| 12GB/s | 0.2/s | 0.2/s | 0.3/s | 0.3/s |
+| 0.9GB/s | 0.2/s | 0.2/s | 0.1/s | 0.1/s |
 
-- 전체 unit/integration 테스트 52개 통과. 작은 무작위 trace 120회는 매 이벤트 뒤 GPU/CPU 보존·용량·반환을 확인했다.
-- 실제 미래 tool duration과 다음 prompt를 바꿔도 관측 전의 admission/reclaim 결정은 4개 새 정책/기준선에서 같았다.
-- 기존 7정책 × 3설정 × 9조건 × 5seed = **945회**에서 수정 전후 기존 지표·요청·점유율·전체 이벤트 fingerprint가 모두 일치했다. [원본 fingerprint](data/week11/legacy_fingerprints.json), [검증 기록](data/week11/regression.json).
-- source hash·실행 수·입력 동일성·대조군 검증은 [validation.json](data/week11/validation.json)에 있다.
-- [summary.csv](data/week11/summary.csv): 실행별 지표. [comparison.csv](data/week11/comparison.csv): 조건별 평균·표준편차. [paired.csv](data/week11/paired.csv): 같은 trace/seed의 차이와 95% CI.
-- raw trace/requests/occupancy 및 seed 0의 전체 events는 로컬 `results/week11_20261112`에 있다. raw는 git에서 제외하고 실행 스크립트·compact 결과·실행된 notebook·그림을 공유한다.
+이는 시험 격자점이며 실제 서비스의 확정 SLO나 연속적 최대 용량이 아니다. 통과점이 없는 경우도 용량 0을 뜻하지 않는다.
 
-## 결론과 한계
+Prefill 8,000/4,000/2,000 tokens/s는 비제약 참조까지 같은 속도로 재실행했다. 예를 들어 both_4x·180초·0.2/s에서 비제약 복귀 P95는 47.8→810.8→4,903.0ms였다. 기본 계산 가정의 영향이 크므로 2,000도 실측값으로 채택하지 않는다.
 
-1. **T-LRU:** 부분 보관량을 tail 목표에 맞춰 배분하는 판단은 같은 GPU-only block LRU보다 도움이 됐다. 다만 prefill FIFO 대기까지 함께 봐야 하며, 빠른 CPU offload를 보편적으로 대체한다는 근거는 없다.
-2. **HotPrefix admission:** 전송량 절감은 확인했지만 기본 환경의 지연 개선은 확인하지 못했다. 느린 PCIe 조건에서는 일부 이득이 관측됐고 CPU 크기만으로 유불리를 판단할 수 없었다.
-3. 후속 방향은 정책 이름 추가보다 **환경·워크로드에 맞는 보관 판단**과 **active 예약·prefill FIFO 병목의 분리**다. 이 결과만으로 새 적응형 결합 정책이 검증됐다고 주장하지 않는다.
+## 7. 정책별 판단과 다음 검증
 
-실제 attention·생성 품질·CUDA overhead·동적 batching·레이어별 overlap은 측정하지 않았다. 각 논문의 전체 시스템 개선 수치와 이번 결과를 직접 비교하지 않는다. 더 긴 세션·미복귀·공유 prefix 환경으로의 일반화는 추가 실험이 필요하다.
+| 정책 | 현재 근거에서 가능한 판단 | 다음에 필요한 검증 |
+|---|---|---|
+| Block LRU evict | CPU를 쓰지 않는 단순 부분 회수 기준선 | workload·계산 부하별 재계산과 대기열 비용 |
+| T-LRU | 같은 GPU-only 기준선 대비 조건별 개선, 느린 전송에서 유리한 영역 | 세션 길이·재사용 여부·예산 가정에 대한 일반화 |
+| Block LRU offload | 빠른 PCIe·충분한 CPU에서는 참조값에 가까움 | 실측 전송 속도·copy overlap·작은 CPU에서의 비용 |
+| HotPrefix admission | 기본 환경에서는 지연 손해, 일부 중간 전송·높은 부하에서 이득 | 미복귀·공유 prefix·재사용 편중에서의 선별 가치 |
+| 기존 7정책 | 초기 결과와 참조 격차·SLO 재해석까지 | 확장 조건에서 결론이 필요하면 기존 엔진 안에서 별도 비교 |
+
+다음 우선순위는 **실측 보정 → 대표 역전 구간 재확인 → 재사용 불확실성 → 실제 엔진 한 지점 검증**이다.
+
+- **보정:** GPU·모델 revision·정밀도·batch·문맥 길이를 기록하고 prefill/decode·양방향 복사를 측정한다. warm-up·동기화 후 길이별 service 시간과 반복 분포를 남긴다. 전송 GB/s와 메모리 GiB를 구분한다. 부하는 참조 prefill 사용률과 평균 GPU 수요/4GiB도 함께 맞춘다.
+- **입력:** 미복귀·도구별 긴 꼬리·공유 prefix를 검증하려면 생명주기·공유 참조 수까지 정의해야 한다. 지금처럼 마지막 턴에서 즉시 KV를 해제하는 모델에서 후속 턴을 단순 삭제하는 것은 미복귀 KV 잔존 실험의 대체가 아니다.
+- **현실 검증:** 지원 가능한 실제 엔진에서 같은 길이·도착·대기 조건 한 지점을 측정하고 예약·batching·전송 overlap 차이를 설명한다. 아직 수행하지 않았다.
+
+현재 입력에도 도착·대기·길이의 무작위성은 있다. 부족한 것은 특히 재사용 여부와 세션 간 공유의 불확실성이다. normal TTFT도 재계산이 공유 FIFO에 미치는 간접 영향을 반영하므로 보조 지표로 유지한다. Dynamic TTL·InferCept는 구현·평가하지 않았다.
+
+## 8. 재현과 기록
+
+- [초기 원자료](data/week11): summary·paired·hardware·실행 manifest. [추가 원자료](data/week11_revision): 참조 격차·조건별 짝차이·기제·안정성·용량 격자·실행 manifest.
+- 실험 당시 계획과 문서 정리 전 runner는 [provenance/index.json](data/week11_revision/provenance/index.json)에 hash와 함께 보존했다. 실험 manifest·원자료는 수정하지 않았다. 현재 simulator/config는 직접 hash를 검증하고, 이동한 계획·runner의 당시 내용은 보존본으로 검증한다.
+- 기존 7정책 945회 fingerprint 동등성, 무작위 자원 보존, 미래 정보 비사용, 선택적 보관 OFF 대조를 초기 평가에서 확인했다. 추가 관측기의 replay 동등성과 구간 사용률도 검증했다. [초기 검증](data/week11/regression.json), [추가 검증](data/week11_revision/validation.json), [테스트 기록](data/week11_revision/regression.json).
+- 원시 trace·요청·이벤트는 로컬 results에 있고 Git에서는 제외한다. 재실행은 새 출력 디렉터리를 사용한다. 노트북 재생성은 저장된 CSV·그림을 읽으며 시뮬레이션을 다시 돌리지 않는다.
+
+~~~powershell
+# 저장된 결과로 두 노트북 생성
+python scripts/build_week11_notebook.py
+python scripts/build_week11_evaluation_notebook.py
+
+# 전체 실험을 새로 실행할 때만
+python scripts/run_week11.py --output results/week11_new --workers 4
+python scripts/report_week11.py results/week11_new
+python scripts/run_week11_revision.py --output results/week11_revision_new --workers 4
+python scripts/report_week11_revision.py results/week11_revision_new
+
+python -m unittest discover -s tests -v
+~~~

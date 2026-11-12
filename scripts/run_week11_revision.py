@@ -1,0 +1,283 @@
+"""Paired evaluation audit; leaves the original simulator and 7,290 runs intact."""
+from __future__ import annotations
+
+import argparse
+from collections import Counter, defaultdict
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from dataclasses import asdict, replace
+import hashlib
+import json
+from pathlib import Path
+import re
+import subprocess
+import sys
+import time
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from kvbench.engine import Simulator
+from kvbench.experiment import W2_FACTORIAL_CONDITIONS
+from kvbench.metrics import occupancy_exposure, percentile, summarize
+from kvbench.policies import make_policy
+from kvbench.resources import CpuPool, FifoServer
+from kvbench.system import load_policy_params, load_system_config
+from kvbench.week11 import diagnostics, digest
+from kvbench.workload import generate, load_config
+from scripts.run_week11 import SETTINGS, NEW, write_csv, write_json
+
+CONDITIONS = (("base_4x", "W1", 4), ("both_4x", "W2", 4))
+PCIE = (12, 3, 1.5, .9, .6, .3)
+CPU = (64, 8, 4, 2, 1, .5)
+ENVIRONMENTS = tuple((b, 64) for b in PCIE) + tuple((12, c) for c in CPU if c != 64)
+
+
+def overlap(start, end, left, right):
+    return max(min(end, right) - max(start, left), 0.0)
+
+
+class ObservedServer(FifoServer):
+    def __init__(self, rate, windows):
+        super().__init__(rate)
+        self.windows = windows
+        self.busy_by_window = {name: 0.0 for name in windows}
+
+    def schedule(self, now, work):
+        start, end = super().schedule(now, work)
+        for name, (left, right) in self.windows.items():
+            self.busy_by_window[name] += overlap(start, end, left, right)
+        return start, end
+
+
+class ObservedCpu(CpuPool):
+    def __init__(self, total_bytes):
+        super().__init__(total_bytes)
+        self.peak_bytes = 0
+
+    def try_alloc(self, nbytes):
+        accepted = super().try_alloc(nbytes)
+        self.peak_bytes = max(self.peak_bytes, self.used_bytes)
+        return accepted
+
+
+class Observer:
+    """Retain diagnostic events, aggregate repeated copy events without changing replay."""
+    def __init__(self, sim, warmup, end):
+        self.sim = sim
+        self.windows = {"measurement": (warmup, end),
+                        "early": (warmup, (warmup + end) / 2),
+                        "late": ((warmup + end) / 2, end)}
+        sim.prefill = ObservedServer(sim.prefill.rate_per_s, self.windows)
+        sim.pcie = ObservedServer(sim.pcie.rate_per_s, self.windows)
+        sim.cpu = ObservedCpu(sim.cpu.total_bytes)
+        self.cost_events = defaultdict(int)
+        self.admission = Counter()
+        sim._log = self.log
+
+    def log(self, event, s=None, detail=""):
+        sim = self.sim
+        if s is None:
+            return
+        turn = s.turns[min(s.idx, len(s.turns) - 1)]
+        if event == "PREFILL_QUEUED":
+            sim.events.append((sim.now, event, s.sid, turn.turn_id, turn.request_id, detail))
+        elif event in ("OFFLOAD_START", "RELOAD_START", "RECOMPUTE"):
+            field = "tokens" if event == "RECOMPUTE" else "bytes"
+            amount = int(re.search(field + r"=(\d+)", detail)[1])
+            self.cost_events[event, s.sid, turn.turn_id, turn.request_id] += amount
+        elif event == "CPU_ADMISSION":
+            reason = re.search(r"reason=(\w+)", detail)[1]
+            accepted = int(re.search(r"accepted=(\d+)", detail)[1])
+            self.admission["decisions"] += 1
+            self.admission["accepted" if accepted else "rejected"] += 1
+            self.admission["reason_" + reason] += 1
+            if reason == "frequency" and turn.turn_id == 0:
+                self.admission["frequency_first_wait"] += 1
+
+    def finish(self):
+        for (event, sid, turn, rid), amount in self.cost_events.items():
+            field = "tokens" if event == "RECOMPUTE" else "bytes"
+            self.sim.events.append((0.0, event, sid, turn, rid, f"{field}={amount}"))
+
+    def metrics(self):
+        sim = self.sim
+        result = {"cpu_peak_gib": sim.cpu.peak_bytes / 2**30}
+        queues = {}
+        for time_ms, event, _, _, rid, detail in sim.events:
+            if event == "PREFILL_QUEUED":
+                queues[rid] = (time_ms, float(re.search(r"start=([\d.eE+-]+)", detail)[1]))
+        resumes = []
+        for s in sim.sessions.values():
+            records = {r.turn_id: r for r in s.records}
+            for r in s.records:
+                if not r.turn_id or r.outcome != "completed":
+                    continue
+                ready = records[r.turn_id - 1].complete_ms + s.turns[r.turn_id - 1].tool_duration_ms
+                queued, start = queues[r.request_id]
+                resumes.append((ready, r.first_token_ms - ready, start - queued))
+        for name, (left, right) in self.windows.items():
+            for resource in ("prefill", "pcie"):
+                server = getattr(sim, resource)
+                result[f"{resource}_{name}_busy_pct"] = server.busy_by_window[name] / (right - left) * 100
+            selected = [(latency, queue) for ready, latency, queue in resumes if left <= ready < right]
+            result[f"resume_{name}_count"] = len(selected)
+            result[f"resume_{name}_p95_ms"] = percentile([v[0] for v in selected], 95)
+            result[f"resume_{name}_queue_mean_ms"] = (
+                sum(v[1] for v in selected) / len(selected) if selected else None)
+            result[f"gpu_{name}_mean_pct"] = occupancy_exposure(
+                sim.gpu.samples, sim.gpu.total_blocks, left, right)[0]
+        return result | {"cpu_admission_" + k: v for k, v in self.admission.items()}
+
+
+def replay(trace, cfg, system, policy, meta):
+    params = load_policy_params(ROOT / "configs/policies_week7.json", policy)
+    sim = Simulator(trace, system, make_policy(policy, params), keep_events=True)
+    observer = Observer(sim, cfg.warmup_ms, cfg.duration_ms)
+    sim.run()
+    observer.finish()
+    if sim.gpu.used_blocks or sim.cpu.used_bytes:
+        raise AssertionError("resource ownership did not drain")
+    row = summarize(sim, cfg.warmup_ms, meta, cfg.duration_ms)
+    row.update(diagnostics(sim, cfg.warmup_ms, cfg.duration_ms))
+    row.update(observer.metrics())
+    row.update(pcie_gbps=system.pcie_bytes_per_s / 1e9, cpu_gib=system.cpu_kv_pool_bytes / 2**30,
+               gpu_gib=system.gpu_kv_pool_bytes / 2**30,
+               prefill_rate=system.prefill_tokens_per_s, variant=policy,
+               duration_ms=cfg.duration_ms, warmup_ms=cfg.warmup_ms, physical_replay=True)
+    return row
+
+
+def worker(job):
+    cfg = load_config(ROOT / "configs" / SETTINGS[job["setting"]])
+    cfg = replace(cfg, duration_ms=job["duration_ms"], warmup_ms=job["warmup_ms"],
+                  stress_arrival_rate_per_s=job["stress_rate"])
+    trace = generate(cfg, job["wid"], job["level"], job["seed"])
+    trace_hash = digest([asdict(t) for t in trace])
+    system = load_system_config(ROOT / "configs/system_1080ti_llama3b.json")
+    base = {"suite": job["suite"], "setting": job["setting"], "condition": job["condition"],
+            "stress_rate": job["stress_rate"], "seed": job["seed"],
+            "trace_sha256": trace_hash, "case_id": job["case_id"]}
+    rows = []
+    for prefill in job["prefill_rates"]:
+        current = replace(system, prefill_tokens_per_s=prefill)
+        if job["reference"]:
+            reference = replay(trace, cfg, replace(current, gpu_kv_pool_bytes=64 * 2**30), "pin_all", base)
+            if reference["peak_kv_occupancy_pct"] >= 100 or reference["rejected_jobs"]:
+                raise AssertionError("64GiB reference is constrained")
+            rows.append(reference)
+        if job["suite"] == "reference":
+            continue
+        cpu_free = {}
+        for bandwidth, cpu_gib in job["environments"]:
+            env_system = replace(current, pcie_bytes_per_s=bandwidth * 1e9,
+                                 cpu_kv_pool_bytes=int(cpu_gib * 2**30))
+            for policy in NEW:
+                if policy in cpu_free:
+                    row = dict(cpu_free[policy], pcie_gbps=bandwidth, cpu_gib=cpu_gib,
+                               physical_replay=False)
+                else:
+                    row = replay(trace, cfg, env_system, policy, base)
+                    if policy in ("tlru", "prefix_lru_evict"):
+                        cpu_free[policy] = row
+                rows.append(row)
+    return rows
+
+
+def make_jobs(pilot=False):
+    jobs = []
+
+    def add(suite, setting, condition, wid, level, seed, duration, warmup, rate,
+            environments, reference=True, prefill_rates=(8000,)):
+        case = f"{suite}__{setting}__{condition}__r{rate:g}__seed{seed}"
+        jobs.append(dict(suite=suite, setting=setting, condition=condition, wid=wid,
+                         level=level, seed=seed, duration_ms=duration, warmup_ms=warmup,
+                         stress_rate=rate, environments=environments, reference=reference,
+                         prefill_rates=prefill_rates, case_id=case))
+
+    for setting, filename in SETTINGS.items():
+        cfg = load_config(ROOT / "configs" / filename)
+        for condition, wid, level in W2_FACTORIAL_CONDITIONS:
+            for seed in range(15):
+                add("reference", setting, condition, wid, level, seed, cfg.duration_ms,
+                    cfg.warmup_ms, cfg.stress_arrival_rate_per_s, ())
+    for setting in ("180s_02", "180s_03"):
+        rate = .2 if setting == "180s_02" else .3
+        for condition, wid, level in CONDITIONS:
+            for seed in range(5):
+                add("environment", setting, condition, wid, level, seed, 180000, 10000,
+                    rate, ENVIRONMENTS, reference=False)
+    for condition, wid, level in CONDITIONS:
+        rates = (.1, .2, .3, .4) if condition == "both_4x" else (.2, .3)
+        for rate in rates:
+            for seed in range(5):
+                add("long", "180s_02", condition, wid, level, seed, 900000, 300000,
+                    rate, ((12, 64), (1.5, 64), (.9, 64)))
+        for seed in range(5):
+            add("prefill", "180s_02", condition, wid, level, seed, 180000, 10000, .2,
+                ((12, 64),), prefill_rates=(8000, 4000, 2000))
+    if pilot:
+        return [dict(j, environments=((12, 64), (.9, 64))) if j["suite"] == "environment" else j
+                for j in jobs if j["seed"] == 0 and j["condition"] == "both_4x"
+                and j["setting"] == "180s_02"
+                and (j["suite"] != "long" or j["stress_rate"] == .2)]
+    return jobs
+
+
+def run(output, workers=4, pilot=False):
+    output = Path(output)
+    if output.exists():
+        raise ValueError("choose a new output directory; existing runs are never overwritten")
+    output.mkdir(parents=True)
+    jobs = make_jobs(pilot)
+    sources = sorted((ROOT / "kvbench").rglob("*.py")) + [Path(__file__)]
+    sources += [ROOT / "configs/system_1080ti_llama3b.json", ROOT / "configs/policies_week7.json"]
+    sources += [ROOT / "configs" / filename for filename in SETTINGS.values()]
+    sources += [ROOT / "docs/data/week11_revision/provenance/week11_revision_plan.txt"]
+    manifest = {"experiment": "week11_evaluation_revision", "status": "running",
+                "base_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+                "source_sha256": {p.relative_to(ROOT).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+                                  for p in sources},
+                "original_summary_sha256": hashlib.sha256((ROOT / "docs/data/week11/summary.csv").read_bytes()).hexdigest(),
+                "jobs": jobs, "workers": workers, "pilot": pilot}
+    manifest["planned_analysis_rows"] = sum(len(j["prefill_rates"]) *
+        (int(j["reference"]) + len(NEW) * len(j["environments"])) for j in jobs)
+    manifest["planned_physical_replays"] = sum(len(j["prefill_rates"]) *
+        (int(j["reference"]) + (2 + 2 * len(j["environments"]) if j["environments"] else 0))
+        for j in jobs)
+    write_json(output / "experiment.json", manifest)
+    began, rows = time.monotonic(), []
+    with (output / "checkpoint.jsonl").open("w", encoding="utf-8") as checkpoint:
+        with ProcessPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(worker, j): j for j in jobs}
+            for index, future in enumerate(as_completed(futures), 1):
+                result = future.result()
+                rows.extend(result)
+                checkpoint.write(json.dumps(result, allow_nan=False) + "\n")
+                checkpoint.flush()
+                if index % 10 == 0 or index == len(jobs):
+                    print(f"{index}/{len(jobs)} traces; {len(rows)} analysis rows; "
+                          f"{time.monotonic() - began:.1f}s", flush=True)
+    rows.sort(key=lambda r: (r["suite"], r["case_id"], r["prefill_rate"], r["pcie_gbps"],
+                            r["cpu_gib"], r["variant"]))
+    if (len(rows) != manifest["planned_analysis_rows"]
+            or sum(r["physical_replay"] for r in rows) != manifest["planned_physical_replays"]):
+        raise AssertionError("incomplete planned grid")
+    write_csv(output / "summary.csv", rows)
+    manifest.update(status="complete", completed_jobs=len(jobs), analysis_rows=len(rows),
+                    physical_replays=sum(r["physical_replay"] for r in rows),
+                    elapsed_seconds=time.monotonic() - began,
+                    summary_sha256=hashlib.sha256((output / "summary.csv").read_bytes()).hexdigest())
+    write_json(output / "experiment.json", manifest)
+    print(json.dumps({k: manifest[k] for k in
+                      ("status", "analysis_rows", "physical_replays", "elapsed_seconds")}), flush=True)
+    return output
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--pilot", action="store_true")
+    args = parser.parse_args()
+    if args.workers < 1:
+        parser.error("workers must be positive")
+    run(args.output, args.workers, args.pilot)

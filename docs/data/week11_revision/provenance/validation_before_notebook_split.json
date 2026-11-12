@@ -1,0 +1,28 @@
+{
+  "analysis_rows": 1825,
+  "physical_replays": 1305,
+  "identical_original_replays": 280,
+  "original_validation": {
+    "runs": 7290,
+    "suites": {
+      "ablation": 810,
+      "hardware": 2025,
+      "main": 4455
+    },
+    "unique_input_traces": 405,
+    "all_paired_inputs_identical": true,
+    "all_source_hashes_match": true,
+    "selective_off_exact_matches": 135,
+    "cpu_free_hardware_exact_matches": 810
+  },
+  "reference_unconstrained": true,
+  "source_hashes_match": true,
+  "paired_input_hashes_match": true,
+  "analysis_source_sha256": {
+    "scripts/report_week11_revision.py": "7d58766fa38ac6f63a98541f66a7624f09fc384770c108b49f1a8f011b749fd3",
+    "scripts/build_week11_notebook.py": "ae41fb2a246f18ddb80875b097f452ffc6aceafd3ba4bdd0c1733ee347288cc5",
+    "scripts/week11_revision_notebook.py": "46ca3d561809c3c2ab9b238892106f8043c944e15de360cdc334fb75ea7b3456",
+    "scripts/report_week11.py": "89b91aaf129768ee50476de6bd36c03dd4c29d8a0ba288234c6eb17e24936736"
+  },
+  "unique_input_traces": 435
+}

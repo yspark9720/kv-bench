@@ -1,0 +1,35 @@
+{
+  "analysis_rows": 1825,
+  "physical_replays": 1305,
+  "identical_original_replays": 280,
+  "original_validation": {
+    "runs": 7290,
+    "suites": {
+      "ablation": 810,
+      "hardware": 2025,
+      "main": 4455
+    },
+    "unique_input_traces": 405,
+    "all_paired_inputs_identical": true,
+    "all_source_hashes_match": true,
+    "selective_off_exact_matches": 135,
+    "cpu_free_hardware_exact_matches": 810
+  },
+  "reference_unconstrained": true,
+  "paired_input_hashes_match": true,
+  "evaluated_sources_verified": true,
+  "current_source_hashes_match": false,
+  "core_simulator_and_configs_match": true,
+  "archived_source_paths": [
+    "docs/week11_revision_plan.md",
+    "scripts/run_week11_revision.py"
+  ],
+  "analysis_source_sha256": {
+    "scripts/report_week11_revision.py": "fff3299708c787a7e01ff6afa367e71c8f2fdbb6f4c2461e8699457da243b4a8",
+    "scripts/build_week11_notebook.py": "049fde9cb518b25056591388b35509bf4a5ed45979ecf9d93f2ae91a2efe24f4",
+    "scripts/build_week11_evaluation_notebook.py": "1d2b963057190865c1b7b573c5b9b603684e296ec570cf98dd6521af02c43472",
+    "scripts/week11_revision_notebook.py": "6e54431ed43b3506a7e24b1221a11268f55af7ef2cf16d0c1617122a6d2e9804",
+    "scripts/report_week11.py": "89b91aaf129768ee50476de6bd36c03dd4c29d8a0ba288234c6eb17e24936736"
+  },
+  "unique_input_traces": 435
+}
