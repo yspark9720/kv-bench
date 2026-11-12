@@ -1,0 +1,9 @@
+# Experiment manifests and validation records use byte-exact SHA-256 hashes.
+# Preserve evaluated inputs and replay/analysis/test sources across checkouts.
+kvbench/** -text
+configs/** -text
+scripts/** -text
+tests/** -text
+docs/data/week11/** -text
+docs/data/week11_revision/** -text
+docs/week11_feedback.md -text
